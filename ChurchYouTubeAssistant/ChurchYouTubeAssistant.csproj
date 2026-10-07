@@ -1,0 +1,33 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>b126f3e8-06e8-4c20-ba74-368bc4161cad</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Google.Apis.Auth" Version="1.77.0" />
+    <PackageReference Include="Google.Apis.YouTube.v3" Version="1.77.0.4284" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.12" />
+    <PackageReference Include="Microsoft.OpenApi" Version="2.12.2" />
+    <PackageReference Include="OpenAI" Version="2.14.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Versioned AI prompts, stored as plain text/JSON (not C# source) so they can be edited and
+         versioned independently of application code. Copied to the output/publish directory so
+         reading them by ContentRootPath works after a real deploy, not just under `dotnet run`.
+         .json files are already auto-included as Content by the SDK's default globs (Update just
+         adds the copy settings); .txt is not, so it needs an explicit Include. -->
+    <Content Update="Prompts/**/*.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Prompts/**/*.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

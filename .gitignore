@@ -1,0 +1,63 @@
+# ---------------------------------------------------------------------------
+# Secrets and credentials - these must never be committed
+# ---------------------------------------------------------------------------
+# Google OAuth credential files downloaded from Google Cloud Console.
+# This application does NOT need them at runtime: ClientId/ClientSecret come
+# from .NET User Secrets locally and from the platform secret store when hosted.
+client_secret*.json
+client_secrets*.json
+credentials*.json
+*oauth*credentials*.json
+service-account*.json
+token.json
+tokens.json
+
+# Local environment overrides
+.env
+.env.*
+appsettings.Local.json
+appsettings.*.Local.json
+secrets.json
+
+# ---------------------------------------------------------------------------
+# .NET build output
+# ---------------------------------------------------------------------------
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+artifacts/
+publish/
+*.user
+*.suo
+*.userprefs
+*.binlog
+project.lock.json
+project.fragment.lock.json
+
+# ---------------------------------------------------------------------------
+# IDE / editor
+# ---------------------------------------------------------------------------
+.vs/
+.vscode/
+.idea/
+*.swp
+*~
+
+# ---------------------------------------------------------------------------
+# OS
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+
+# ---------------------------------------------------------------------------
+# Test / coverage output
+# ---------------------------------------------------------------------------
+[Tt]est[Rr]esult*/
+coverage*.json
+coverage*.xml
+*.coverage

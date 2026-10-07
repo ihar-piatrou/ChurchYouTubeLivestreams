@@ -1,0 +1,305 @@
+@model VideoAnalysisPageViewModel
+@{
+    ViewData["Title"] = "AI Analysis";
+    var a = Model.Selected;
+}
+
+<p><a href="/">&larr; Back to dashboard</a></p>
+<h1>AI Analysis</h1>
+<p class="muted">Video ID: @Model.VideoId &middot; <a href="/transcript/@Model.VideoId">view transcript</a></p>
+
+@if (Model.FlashSuccess is not null)
+{
+    <div class="alert alert-success">@Model.FlashSuccess</div>
+}
+@if (Model.FlashError is not null)
+{
+    <div class="alert alert-error">@Model.FlashError</div>
+}
+
+<div class="card">
+    <div class="status-row">
+        @if (Model.History.Count > 0)
+        {
+            <form method="get" action="/videos/@Model.VideoId/analysis" class="inline">
+                <label class="muted" for="analysisId">History:</label>
+                <select name="analysisId" id="analysisId" onchange="this.form.submit()">
+                    @foreach (var h in Model.History)
+                    {
+                        <option value="@h.Id" selected="@(a?.Id == h.Id)">
+                            @h.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm") - @h.Status
+                            @(h.IsPublished ? " (published)" : "")
+                        </option>
+                    }
+                </select>
+            </form>
+        }
+        <form method="post" action="/videos/@Model.VideoId/analysis/analyze" style="margin-left:auto;"
+              onsubmit="return confirm('Run a new AI analysis? This calls OpenAI and may take up to a minute.');">
+            @Html.AntiForgeryToken()
+            <button type="submit" class="btn">@(a is null ? "Analyze Video with AI" : "Regenerate Analysis")</button>
+        </form>
+    </div>
+</div>
+
+@if (a is null)
+{
+    <p class="muted">No analysis yet for this video. Click "Analyze Video with AI" to generate one.</p>
+    return;
+}
+
+@if (a.Status != AnalysisStatus.Succeeded)
+{
+    <div class="alert alert-warning">
+        Status: <strong>@a.Status</strong>.
+        @if (a.Notes.Count > 0)
+        {
+            <ul>
+                @foreach (var note in a.Notes) { <li>@note</li> }
+            </ul>
+        }
+    </div>
+}
+
+<div class="card">
+    <div class="muted">
+        Model: @a.Model &middot; Prompt version: @a.PromptVersion
+        @if (a.UsedMultiStageFallback) { <span> &middot; multi-stage fallback used (long transcript)</span> }
+        @if (a.TotalTokens is { } tokens) { <span> &middot; ~@tokens.ToString("N0") tokens</span> }
+        &middot; @a.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+        @if (a.IsPublished) { <span class="badge badge-ok"> Published @a.PublishedAtUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span> }
+    </div>
+</div>
+
+@if (Model.ConflictDetected)
+{
+    <div class="alert alert-error">
+        <strong>Conflict:</strong> @Model.ConflictDetail
+        <p><strong>Current live title:</strong> @Model.ConflictLiveTitle</p>
+        <p><strong>Current live description:</strong></p>
+        <div class="transcript-box" style="max-height:10em;">@Model.ConflictLiveDescription</div>
+    </div>
+}
+
+<h2>Title &amp; Description</h2>
+<div class="card">
+    <h3 class="muted">Original</h3>
+    <p><strong>@a.OriginalTitle</strong></p>
+    <div class="transcript-box" style="max-height:8em;">@a.OriginalDescription</div>
+</div>
+
+<form method="post" action="/videos/@Model.VideoId/analysis/@a.Id/publish" id="publish-form">
+    @Html.AntiForgeryToken()
+    <input type="hidden" name="acknowledgeConflict" id="acknowledgeConflict" value="@(Model.ConflictDetected ? "true" : "false")" />
+
+    <div class="card">
+        <h3 class="muted">AI Optimized (editable before publishing or saving)</h3>
+
+        @if (!string.IsNullOrWhiteSpace(a.TitleReasoning))
+        {
+            <p class="muted"><em>@a.TitleReasoning</em></p>
+        }
+
+        <label for="title-input"><strong>Title</strong></label><br />
+        <input type="text" id="title-input" name="title" maxlength="100" style="width:100%;padding:0.5rem;margin:0.3rem 0;"
+               value="@(Model.PendingPublishTitle ?? a.EditedTitle ?? a.OptimizedTitle)" />
+
+        @if (a.AlternativeTitles.Count > 0)
+        {
+            <div class="muted">Alternatives (click to use):</div>
+            foreach (var alt in a.AlternativeTitles)
+            {
+                <button type="button" class="btn btn-secondary" style="margin:0.2rem 0.3rem 0 0;font-size:0.85rem;"
+                        onclick="document.getElementById('title-input').value = this.dataset.title">
+                    @alt
+                </button>
+                <span style="display:none" data-title="@alt"></span>
+            }
+        }
+
+        <label for="description-input" style="display:block;margin-top:1rem;"><strong>Description</strong></label>
+        <textarea id="description-input" name="description" rows="14" maxlength="5000"
+                  style="width:100%;padding:0.5rem;font-family:inherit;">@(Model.PendingPublishDescription ?? Model.PrefilledDescription)</textarea>
+
+        <div class="status-row" style="margin-top:0.75rem;">
+            <button type="submit" formaction="/videos/@Model.VideoId/analysis/@a.Id/save" class="btn btn-secondary">
+                Save Draft
+            </button>
+            <button type="submit"
+                    onclick="return confirm('Publish this title and description to the real YouTube video now?');"
+                    class="btn">
+                Update YouTube Video
+            </button>
+            <span class="muted">Save Draft stores your edits only. Update YouTube Video overwrites the live title/description.</span>
+        </div>
+    </div>
+</form>
+
+<h2>Sermon Analysis</h2>
+<div class="card">
+    <p><strong>Main message:</strong> @a.MainMessage</p>
+    <p><strong>Main question:</strong> @a.MainQuestion</p>
+    <p><strong>Key themes:</strong> @string.Join(" · ", a.KeyThemes)</p>
+    <p><strong>Keywords:</strong> @string.Join(", ", a.Keywords)</p>
+</div>
+
+<h2>Bible References</h2>
+@if (a.BibleReferences.Count == 0)
+{
+    <p class="muted">None identified.</p>
+}
+else
+{
+    <div class="card">
+        <table>
+            <thead><tr><th>Reference</th><th>Type</th><th>Context</th><th>Time</th></tr></thead>
+            <tbody>
+                @foreach (var r in a.BibleReferences)
+                {
+                    <tr>
+                        <td>
+                            @r.Reference
+                            @if (r.IsPrimary) { <span class="badge badge-ok">primary</span> }
+                        </td>
+                        <td class="muted">@r.ReferenceType</td>
+                        <td>@r.Context</td>
+                        <td class="muted">@(r.StartSeconds is { } s ? TimeSpan.FromSeconds(s).ToString(@"hh\:mm\:ss") : "-")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+<h2>Chapters</h2>
+@if (a.Chapters.Count == 0)
+{
+    <p class="muted">No valid chapter list (fewer than 3 reliable chapters, or timestamps could not be validated).</p>
+}
+else
+{
+    <div class="card">
+        <table>
+            <thead><tr><th>Include</th><th>Time</th><th>Title</th><th>Summary</th></tr></thead>
+            <tbody>
+                @foreach (var c in a.Chapters.OrderBy(c => c.StartSeconds))
+                {
+                    <tr>
+                        <td><input type="checkbox" class="chapter-toggle" checked="@c.Included"
+                                   data-line="@c.StartTime @c.Title" /></td>
+                        <td class="muted">@c.StartTime</td>
+                        <td>@c.Title</td>
+                        <td class="muted">@c.Summary</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <p class="muted">Toggling chapters updates the description text above - review before publishing.</p>
+    </div>
+}
+
+<h2>Thumbnail Concept</h2>
+<div class="card">
+    <p><strong>@a.Thumbnail?.Headline</strong></p>
+    @if (a.Thumbnail?.AlternativeHeadlines.Count > 0)
+    {
+        <p class="muted">Alternatives: @string.Join(" · ", a.Thumbnail.AlternativeHeadlines)</p>
+    }
+    <p>@a.Thumbnail?.VisualConcept</p>
+    <p class="muted"><strong>Composition:</strong> @a.Thumbnail?.Composition</p>
+    <p class="muted"><em>@a.Thumbnail?.Reasoning</em></p>
+    <label class="muted">Image-generation prompt:</label>
+    <textarea id="thumbnail-prompt" readonly rows="5" style="width:100%;padding:0.5rem;font-family:inherit;">@a.Thumbnail?.ImagePrompt</textarea>
+    <button type="button" class="btn btn-secondary" onclick="copyText('thumbnail-prompt', this)">Copy Thumbnail Prompt</button>
+</div>
+
+<h2>YouTube Shorts Candidates</h2>
+@if (a.Shorts.Count == 0)
+{
+    <p class="muted">No strong, self-contained Shorts candidates were identified.</p>
+}
+else
+{
+    <div id="clip-preview-container" class="card" style="display:none;">
+        <div class="status-row"><strong>Preview</strong><button type="button" class="btn btn-secondary" style="margin-left:auto;" onclick="document.getElementById('clip-preview-container').style.display='none'">Close</button></div>
+        <iframe id="clip-preview" width="100%" height="360" frameborder="0" allowfullscreen
+                style="margin-top:0.5rem;"></iframe>
+        <p class="muted">Preview jumps to the clip's start time. It does not auto-stop at the end time (that needs the full YouTube IFrame Player JS API) - stop playback manually.</p>
+    </div>
+
+    @foreach (var (s, index) in a.Shorts.Select((s, i) => (s, i)))
+    {
+        <div class="card">
+            <div class="status-row">
+                <strong>@s.Title</strong>
+                <span class="badge badge-ok" style="margin-left:0.5rem;">score @s.Score/10</span>
+                @if (s.RequiresManualReview)
+                {
+                    <span class="badge badge-off">review timing</span>
+                }
+                <span class="muted" style="margin-left:auto;">@s.StartTime - @s.EndTime (@s.DurationSeconds s) &middot; confidence: @s.TimestampConfidence</span>
+            </div>
+            <p class="muted">@s.Category</p>
+            <p><strong>Hook:</strong> @s.Hook</p>
+            <p><strong>Main message:</strong> @s.MainMessage</p>
+            <p><strong>Conclusion:</strong> @s.Conclusion</p>
+            <p class="muted"><em>@s.Reason</em></p>
+            <details>
+                <summary class="muted">Transcript excerpt</summary>
+                <div class="transcript-box">@s.TranscriptExcerpt</div>
+            </details>
+            <div class="status-row" style="margin-top:0.5rem;">
+                <button type="button" class="btn btn-secondary" data-start="@s.StartSeconds"
+                        onclick="previewClip('@Model.VideoId', this.dataset.start)">Preview Clip</button>
+                <span id="short-ts-@index" style="display:none;">@s.StartTime - @s.EndTime</span>
+                <button type="button" class="btn btn-secondary" onclick="copyText('short-ts-@index', this)">Copy Timestamps</button>
+            </div>
+        </div>
+    }
+}
+
+<script>
+function copyText(elementId, button) {
+    var el = document.getElementById(elementId);
+    var text = el.value !== undefined ? el.value : el.textContent;
+    navigator.clipboard.writeText(text).then(function () {
+        var original = button.textContent;
+        button.textContent = 'Copied!';
+        setTimeout(function () { button.textContent = original; }, 1500);
+    });
+}
+
+function previewClip(videoId, startSeconds) {
+    var container = document.getElementById('clip-preview-container');
+    var iframe = document.getElementById('clip-preview');
+    iframe.src = 'https://www.youtube.com/embed/' + videoId + '?start=' + startSeconds + '&autoplay=1';
+    container.style.display = 'block';
+    container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// Rebuilds the description textarea's trailing "Chapters:" block from whichever chapter
+// checkboxes are currently checked, so toggling a chapter updates the publish preview live.
+function rebuildChapters() {
+    var textarea = document.getElementById('description-input');
+    if (!textarea) { return; }
+
+    var marker = '\n\nChapters:\n';
+    var markerIndex = textarea.value.indexOf('Chapters:\n');
+    var base = markerIndex >= 0 ? textarea.value.substring(0, textarea.value.lastIndexOf('\n\nChapters:\n')) : textarea.value;
+
+    var lines = [];
+    document.querySelectorAll('.chapter-toggle:checked').forEach(function (cb) {
+        lines.push(cb.dataset.line);
+    });
+
+    textarea.value = lines.length > 0 ? base.trimEnd() + marker + lines.join('\n') : base.trimEnd();
+}
+
+document.querySelectorAll('.chapter-toggle').forEach(function (cb) {
+    cb.addEventListener('change', rebuildChapters);
+});
+
+document.getElementById('publish-form')?.addEventListener('submit', function () {
+    document.getElementById('acknowledgeConflict').value = '@(Model.ConflictDetected ? "true" : "false")';
+});
+</script>

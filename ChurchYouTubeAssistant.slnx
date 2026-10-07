@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="ChurchYouTubeAssistant.Tests/ChurchYouTubeAssistant.Tests.csproj" />
+  <Project Path="ChurchYouTubeAssistant/ChurchYouTubeAssistant.csproj" />
+</Solution>

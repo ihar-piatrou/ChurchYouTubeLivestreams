@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@(ViewData["Title"] is string t ? $"{t} - Church YouTube Assistant" : "Church YouTube Assistant")</title>
+    <link rel="stylesheet" href="~/css/site.css" />
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="/">Church YouTube Assistant</a>
+        <span class="brand-sub">read-only admin view</span>
+    </header>
+    <main class="page">
+        @RenderBody()
+    </main>
+</body>
+</html>

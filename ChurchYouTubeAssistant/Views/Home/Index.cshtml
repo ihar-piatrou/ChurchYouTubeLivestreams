@@ -1,0 +1,132 @@
+@model DashboardViewModel
+@{
+    ViewData["Title"] = "Dashboard";
+}
+
+@if (Model.FlashSuccess is not null)
+{
+    <div class="alert alert-success">@Model.FlashSuccess</div>
+}
+@if (Model.FlashError is not null)
+{
+    <div class="alert alert-error">@Model.FlashError</div>
+}
+@if (Model.FlashWarnings.Count > 0)
+{
+    <div class="alert alert-warning">
+        <strong>Note:</strong>
+        <ul>
+            @foreach (var warning in Model.FlashWarnings)
+            {
+                <li>@warning</li>
+            }
+        </ul>
+    </div>
+}
+@if (Model.StatusMessage is not null)
+{
+    <div class="alert alert-warning">@Model.StatusMessage</div>
+}
+@if (Model.LoadError is not null)
+{
+    <div class="alert alert-error">@Model.LoadError</div>
+}
+
+<div class="card">
+    <div class="status-row">
+        @if (Model.Connected)
+        {
+            <span class="badge badge-ok">Connected</span>
+            <span class="muted">
+                Unattended refresh: @(Model.CanRefreshUnattended ? "available" : "not available - a refresh token was not issued")
+            </span>
+            <form class="inline" method="post" asp-action="Disconnect" asp-controller="Home"
+                  onsubmit="return confirm('Disconnect this YouTube channel? You will need to reauthorize to use it again.');"
+                  style="margin-left:auto;">
+                <button type="submit" class="btn btn-secondary">Disconnect</button>
+            </form>
+        }
+        else
+        {
+            <span class="badge badge-off">Not connected</span>
+            <a class="btn" href="/youtube/connect" style="margin-left:auto;">Connect to YouTube</a>
+        }
+    </div>
+</div>
+
+@if (Model.Channel is { } channel)
+{
+    <div class="card channel">
+        @if (channel.ThumbnailUrl is not null)
+        {
+            <img src="@channel.ThumbnailUrl" alt="" />
+        }
+        <div>
+            <h1>@channel.Title</h1>
+            <div class="channel-meta">
+                @if (channel.CustomUrl is not null)
+                {
+                    <a href="https://youtube.com/@(channel.CustomUrl.TrimStart('@'))" target="_blank" rel="noopener">@channel.CustomUrl</a>
+                    <span> &middot; </span>
+                }
+                @(channel.SubscriberCountHidden ? "subscribers hidden" : $"{channel.SubscriberCount:N0} subscribers")
+                &middot; @(channel.VideoCount?.ToString("N0") ?? "?") videos
+                &middot; @(channel.ViewCount?.ToString("N0") ?? "?") views
+            </div>
+            @if (!string.IsNullOrWhiteSpace(channel.Description))
+            {
+                <p class="channel-desc">@channel.Description</p>
+            }
+        </div>
+    </div>
+}
+
+@if (Model.Videos.Count > 0)
+{
+    <h2>Latest uploads</h2>
+    <div class="card">
+        <table>
+            <thead>
+                <tr>
+                    <th></th>
+                    <th>Title</th>
+                    <th>Published</th>
+                    <th>Duration</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var video in Model.Videos)
+                {
+                    <tr>
+                        <td>
+                            @if (video.ThumbnailUrl is not null)
+                            {
+                                <img class="thumb" src="@video.ThumbnailUrl" alt="" />
+                            }
+                        </td>
+                        <td>
+                            <div class="video-title">@video.Title</div>
+                            <a class="muted" href="@video.WatchUrl" target="_blank" rel="noopener">watch on YouTube</a>
+                            @if (video.Details?.IsLivestream == true)
+                            {
+                                <span class="muted"> &middot; livestream</span>
+                            }
+                        </td>
+                        <td class="muted">@(video.PublishedAt?.ToLocalTime().ToString("yyyy-MM-dd") ?? "-")</td>
+                        <td class="muted">@(video.Details?.Duration?.ToString(@"hh\:mm\:ss") ?? "-")</td>
+                        <td>
+                            <a href="/transcript/@video.VideoId">Transcript</a>
+                            &middot;
+                            <a href="/videos/@video.VideoId/analysis">Analyze</a>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+else if (Model.Connected && Model.LoadError is null)
+{
+    <p class="muted">No uploads found on this channel yet.</p>
+}
