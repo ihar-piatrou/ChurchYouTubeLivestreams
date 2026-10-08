@@ -126,11 +126,14 @@
                 Save Draft
             </button>
             <button type="submit"
-                    onclick="return confirm('Publish this title and description to the real YouTube video now?');"
+                    onclick="return confirm('Publish this title, description@(a.ThumbnailImageGeneratedAtUtc is not null ? " and thumbnail" : "") to the real YouTube video now?');"
                     class="btn">
                 Update YouTube Video
             </button>
-            <span class="muted">Save Draft stores your edits only. Update YouTube Video overwrites the live title/description.</span>
+            <span class="muted">
+                Save Draft stores your edits only. Update YouTube Video overwrites the live title/description
+                @(a.ThumbnailImageGeneratedAtUtc is not null ? "and uploads the generated thumbnail" : "").
+            </span>
         </div>
     </div>
 </form>
@@ -201,16 +204,49 @@ else
 <h2>Thumbnail Concept</h2>
 <div class="card">
     <p><strong>@a.Thumbnail?.Headline</strong></p>
-    @if (a.Thumbnail?.AlternativeHeadlines.Count > 0)
+    @if (a.Thumbnail?.AlternativeHeadlines?.Count > 0)
     {
         <p class="muted">Alternatives: @string.Join(" · ", a.Thumbnail.AlternativeHeadlines)</p>
     }
     <p>@a.Thumbnail?.VisualConcept</p>
     <p class="muted"><strong>Composition:</strong> @a.Thumbnail?.Composition</p>
     <p class="muted"><em>@a.Thumbnail?.Reasoning</em></p>
-    <label class="muted">Image-generation prompt:</label>
-    <textarea id="thumbnail-prompt" readonly rows="5" style="width:100%;padding:0.5rem;font-family:inherit;">@a.Thumbnail?.ImagePrompt</textarea>
-    <button type="button" class="btn btn-secondary" onclick="copyText('thumbnail-prompt', this)">Copy Thumbnail Prompt</button>
+
+    @if (a.ThumbnailImageGeneratedAtUtc is not null)
+    {
+        <img src="/youtube/videos/@Model.VideoId/analyses/@a.Id/thumbnail" alt="Generated thumbnail"
+             style="max-width:100%;border-radius:8px;margin:0.5rem 0;" />
+        <p class="muted">
+            Generated @a.ThumbnailImageGeneratedAtUtc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+            @if (a.ThumbnailPublished)
+            {
+                <span class="badge badge-ok">published to YouTube</span>
+            }
+            else
+            {
+                <span>&middot; not yet published - will upload with the next "Update YouTube Video" click</span>
+            }
+        </p>
+    }
+
+    <form method="post" action="/videos/@Model.VideoId/analysis/@a.Id/thumbnail">
+        @Html.AntiForgeryToken()
+        <label for="thumbnail-prompt" class="muted">Image-generation prompt (editable):</label>
+        <textarea id="thumbnail-prompt" name="imagePrompt" rows="5"
+                  style="width:100%;padding:0.5rem;font-family:inherit;">@(a.EditedThumbnailPrompt ?? a.Thumbnail?.ImagePrompt)</textarea>
+        <div class="status-row" style="margin-top:0.5rem;">
+            <button type="submit" formaction="/videos/@Model.VideoId/analysis/@a.Id/thumbnail/prompt" class="btn btn-secondary">
+                Save Prompt
+            </button>
+            <button type="submit"
+                    onclick="return confirm('Generate a thumbnail image from this prompt via @Model.ThumbnailProviderLabel?');"
+                    class="btn">
+                @(a.ThumbnailImageGeneratedAtUtc is null ? "Generate Thumbnail Image" : "Regenerate Thumbnail Image")
+            </button>
+            <button type="button" class="btn btn-secondary" onclick="copyText('thumbnail-prompt', this)">Copy Thumbnail Prompt</button>
+        </div>
+        <span class="muted">Save Prompt stores your edits only (no @Model.ThumbnailProviderLabel call). Generate also saves the prompt, then calls @Model.ThumbnailProviderLabel.</span>
+    </form>
 </div>
 
 <h2>YouTube Shorts Candidates</h2>
@@ -283,9 +319,12 @@ function rebuildChapters() {
     var textarea = document.getElementById('description-input');
     if (!textarea) { return; }
 
+    // Search and slice on the exact same marker - using a different string for the existence
+    // check than for the slice point (as this used to) could find a false match and either
+    // leave a stale "Chapters:" block in place or cut the base text short.
     var marker = '\n\nChapters:\n';
-    var markerIndex = textarea.value.indexOf('Chapters:\n');
-    var base = markerIndex >= 0 ? textarea.value.substring(0, textarea.value.lastIndexOf('\n\nChapters:\n')) : textarea.value;
+    var markerIndex = textarea.value.indexOf(marker);
+    var base = markerIndex >= 0 ? textarea.value.substring(0, markerIndex) : textarea.value;
 
     var lines = [];
     document.querySelectorAll('.chapter-toggle:checked').forEach(function (cb) {

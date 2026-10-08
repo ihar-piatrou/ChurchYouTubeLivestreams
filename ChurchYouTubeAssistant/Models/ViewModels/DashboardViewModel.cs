@@ -21,6 +21,16 @@ public sealed class DashboardViewModel
     public YouTubeChannelDto? Channel { get; init; }
     public IReadOnlyList<YouTubeVideoDto> Videos { get; init; } = [];
 
+    /// <summary>Per-video AI-analysis/publish status, keyed by VideoId. Missing key means not analyzed.</summary>
+    public IReadOnlyDictionary<string, Services.VideoDashboardStatus> VideoStatuses { get; init; } =
+        new Dictionary<string, Services.VideoDashboardStatus>();
+
+    /// <summary>Pass back as ?pageToken= to fetch the next page of videos; null on the last page.</summary>
+    public string? NextPageToken { get; init; }
+
+    /// <summary>Pass back as ?pageToken= to fetch the previous page of videos; null on the first page.</summary>
+    public string? PrevPageToken { get; init; }
+
     /// <summary>Set when connected, but loading the channel or its videos still failed.</summary>
     public string? LoadError { get; init; }
 }

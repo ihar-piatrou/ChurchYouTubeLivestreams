@@ -52,4 +52,10 @@ public sealed record YouTubeVideoListDto
     public required string UploadsPlaylistId { get; init; }
     public required int Count { get; init; }
     public required IReadOnlyList<YouTubeVideoDto> Videos { get; init; }
+
+    /// <summary>Pass back as pageToken to fetch the next page; null when this is the last page.</summary>
+    public string? NextPageToken { get; init; }
+
+    /// <summary>Pass back as pageToken to fetch the previous page; null on the first page.</summary>
+    public string? PrevPageToken { get; init; }
 }

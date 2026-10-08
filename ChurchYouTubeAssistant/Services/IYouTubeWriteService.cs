@@ -17,4 +17,10 @@ public interface IYouTubeWriteService
     /// <exception cref="Exceptions.YouTubeIntegrationException">The video was not found, or the API call failed.</exception>
     Task UpdateVideoMetadataAsync(
         string videoId, string title, string description, CancellationToken cancellationToken = default);
+
+    /// <summary>Uploads and sets a video's thumbnail image (thumbnails.set).</summary>
+    /// <exception cref="Exceptions.YouTubeNotConnectedException">YouTube has not been connected.</exception>
+    /// <exception cref="Exceptions.YouTubeIntegrationException">The upload failed.</exception>
+    Task SetThumbnailAsync(
+        string videoId, byte[] imageData, string contentType, CancellationToken cancellationToken = default);
 }

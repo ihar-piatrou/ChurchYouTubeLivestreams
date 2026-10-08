@@ -23,4 +23,16 @@ public sealed record PublishResult
     public string? CurrentLiveTitle { get; init; }
     public string? CurrentLiveDescription { get; init; }
     public required VideoAnalysis Analysis { get; init; }
+
+    /// <summary>True when a generated thumbnail existed and an upload to YouTube was attempted.</summary>
+    public bool ThumbnailAttempted { get; init; }
+
+    /// <summary>True when the thumbnail upload succeeded. False (with <see cref="ThumbnailError"/> set) on failure.</summary>
+    public bool ThumbnailPublished { get; init; }
+
+    /// <summary>
+    /// Set when <see cref="ThumbnailAttempted"/> is true but <see cref="ThumbnailPublished"/> is
+    /// false - the title/description still published successfully; only the thumbnail failed.
+    /// </summary>
+    public string? ThumbnailError { get; init; }
 }

@@ -122,4 +122,75 @@ public sealed class VideoAnalysisController(IVideoAnalysisService analysisServic
 
         return Ok(await analysisService.SaveEditsAsync(videoId, analysisId, request, cancellationToken));
     }
+
+    /// <summary>
+    /// Saves an edited thumbnail image prompt as a draft. Makes no Ideogram API call at all -
+    /// distinct from <see cref="GenerateThumbnail"/>, so edits can be saved without spending a
+    /// generation on every change.
+    /// </summary>
+    [HttpPost("{analysisId:guid}/thumbnail/prompt")]
+    [ProducesResponseType(typeof(VideoAnalysis), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<VideoAnalysis>> SaveThumbnailPrompt(
+        [FromRoute] string videoId,
+        [FromRoute] Guid analysisId,
+        [FromBody] GenerateThumbnailRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.ImagePrompt))
+        {
+            return ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
+            {
+                [nameof(request.ImagePrompt)] = ["Image prompt must not be empty."]
+            }));
+        }
+
+        return Ok(await analysisService.SaveThumbnailPromptAsync(
+            videoId, analysisId, request.ImagePrompt, cancellationToken));
+    }
+
+    /// <summary>
+    /// Generates a thumbnail image via Ideogram from the given (possibly hand-edited) prompt and
+    /// saves it to the analysis. The prompt is saved first, as its own write, before the image call
+    /// runs, so an edit is never lost even if generation fails.
+    /// </summary>
+    [HttpPost("{analysisId:guid}/thumbnail")]
+    [ProducesResponseType(typeof(VideoAnalysis), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status502BadGateway)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status504GatewayTimeout)]
+    public async Task<ActionResult<VideoAnalysis>> GenerateThumbnail(
+        [FromRoute] string videoId,
+        [FromRoute] Guid analysisId,
+        [FromBody] GenerateThumbnailRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.ImagePrompt))
+        {
+            return ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
+            {
+                [nameof(request.ImagePrompt)] = ["Image prompt must not be empty."]
+            }));
+        }
+
+        return Ok(await analysisService.GenerateThumbnailImageAsync(
+            videoId, analysisId, request.ImagePrompt, cancellationToken));
+    }
+
+    /// <summary>The generated thumbnail image's raw bytes, for an &lt;img&gt; tag to point at directly.</summary>
+    [HttpGet("{analysisId:guid}/thumbnail")]
+    [Produces("image/png", "image/jpeg", "image/webp")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetThumbnailImage(
+        [FromRoute] string videoId, [FromRoute] Guid analysisId, CancellationToken cancellationToken)
+    {
+        var analysis = await analysisService.GetByIdAsync(videoId, analysisId, cancellationToken);
+        return analysis?.ThumbnailImageData is { Length: > 0 } data
+            ? File(data, analysis.ThumbnailImageContentType ?? "image/png")
+            : NotFound();
+    }
 }

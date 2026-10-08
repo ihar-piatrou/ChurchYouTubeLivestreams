@@ -37,9 +37,14 @@ public interface IYouTubeReadService
     /// Also fetch duration, statistics, caption availability and livestream timings with one extra
     /// videos.list call.
     /// </param>
+    /// <param name="pageToken">
+    /// From a previous call's <see cref="YouTubeVideoListDto.NextPageToken"/> or
+    /// <see cref="YouTubeVideoListDto.PrevPageToken"/>; null for the first page.
+    /// </param>
     Task<YouTubeVideoListDto> GetLatestVideosAsync(
         int maxResults = 10,
         bool includeDetails = false,
+        string? pageToken = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>

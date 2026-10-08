@@ -99,6 +99,18 @@ public sealed class ApiExceptionHandler(
         AiAnalysisException =>
             (StatusCodes.Status502BadGateway, "The AI analysis request failed"),
 
+        ThumbnailGenerationException { Error: ThumbnailGenerationError.Configuration } =>
+            (StatusCodes.Status500InternalServerError, "Ideogram is not configured correctly"),
+
+        ThumbnailGenerationException { Error: ThumbnailGenerationError.RateLimited } =>
+            (StatusCodes.Status429TooManyRequests, "Ideogram rate limit reached"),
+
+        ThumbnailGenerationException { Error: ThumbnailGenerationError.Timeout } =>
+            (StatusCodes.Status504GatewayTimeout, "The thumbnail generation request timed out"),
+
+        ThumbnailGenerationException =>
+            (StatusCodes.Status502BadGateway, "Thumbnail generation failed"),
+
         _ => null
     };
 }

@@ -1,4 +1,5 @@
 @model DashboardViewModel
+@using ChurchYouTubeAssistant.Services
 @{
     ViewData["Title"] = "Dashboard";
 }
@@ -92,12 +93,14 @@
                     <th>Title</th>
                     <th>Published</th>
                     <th>Duration</th>
+                    <th>Status</th>
                     <th></th>
                 </tr>
             </thead>
             <tbody>
                 @foreach (var video in Model.Videos)
                 {
+                    var status = Model.VideoStatuses.GetValueOrDefault(video.VideoId, VideoDashboardStatus.NotAnalyzed);
                     <tr>
                         <td>
                             @if (video.ThumbnailUrl is not null)
@@ -116,6 +119,20 @@
                         <td class="muted">@(video.PublishedAt?.ToLocalTime().ToString("yyyy-MM-dd") ?? "-")</td>
                         <td class="muted">@(video.Details?.Duration?.ToString(@"hh\:mm\:ss") ?? "-")</td>
                         <td>
+                            @switch (status)
+                            {
+                                case VideoDashboardStatus.Published:
+                                    <span class="badge badge-ok">Published to YouTube</span>
+                                    break;
+                                case VideoDashboardStatus.Analyzed:
+                                    <span class="badge badge-warn">Analyzed</span>
+                                    break;
+                                default:
+                                    <span class="muted">Not analyzed</span>
+                                    break;
+                            }
+                        </td>
+                        <td>
                             <a href="/transcript/@video.VideoId">Transcript</a>
                             &middot;
                             <a href="/videos/@video.VideoId/analysis">Analyze</a>
@@ -124,6 +141,19 @@
                 }
             </tbody>
         </table>
+        @if (!string.IsNullOrEmpty(Model.PrevPageToken) || !string.IsNullOrEmpty(Model.NextPageToken))
+        {
+            <div class="status-row" style="margin-top:0.75rem;">
+                @if (!string.IsNullOrEmpty(Model.PrevPageToken))
+                {
+                    <a class="btn btn-secondary" href="/?pageToken=@Uri.EscapeDataString(Model.PrevPageToken)">&larr; Newer</a>
+                }
+                @if (!string.IsNullOrEmpty(Model.NextPageToken))
+                {
+                    <a class="btn btn-secondary" href="/?pageToken=@Uri.EscapeDataString(Model.NextPageToken)">Older &rarr;</a>
+                }
+            </div>
+        }
     </div>
 }
 else if (Model.Connected && Model.LoadError is null)

@@ -66,6 +66,8 @@ public sealed class ChurchYouTubeAssistantDbContext(DbContextOptions<ChurchYouTu
             analysis.Property(a => a.PromptVersion).HasMaxLength(20);
             analysis.Property(a => a.Language).HasMaxLength(20);
             analysis.Property(a => a.Status).HasConversion<string>().HasMaxLength(20);
+            analysis.Property(a => a.ThumbnailImageContentType).HasMaxLength(100);
+            // ThumbnailImageData (byte[]) maps to varbinary(max) by convention - no explicit config needed.
 
             // Simple string-list fields: one JSON array per column via a value converter.
             analysis.Property(a => a.AlternativeTitles).HasConversion(StringListConverter, StringListComparer);

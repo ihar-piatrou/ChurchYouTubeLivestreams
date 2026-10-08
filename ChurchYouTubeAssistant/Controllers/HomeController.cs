@@ -1,10 +1,12 @@
 using System.Text;
+using ChurchYouTubeAssistant.Configuration;
 using ChurchYouTubeAssistant.Exceptions;
 using ChurchYouTubeAssistant.Models;
 using ChurchYouTubeAssistant.Models.ViewModels;
 using ChurchYouTubeAssistant.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Options;
 
 namespace ChurchYouTubeAssistant.Controllers;
 
@@ -26,16 +28,22 @@ public sealed class HomeController(
     IGoogleOAuthService oauthService,
     IYouTubeReadService youTubeReadService,
     IVideoAnalysisService analysisService,
+    IOptions<ThumbnailOptions> thumbnailOptions,
+    IOptions<IdeogramOptions> ideogramOptions,
+    IOptions<OpenAiImageOptions> openAiImageOptions,
     ILogger<HomeController> logger) : Controller
 {
     /// <summary>The dashboard: connection status, channel summary, latest uploads.</summary>
     [HttpGet("/")]
-    public async Task<IActionResult> Index(CancellationToken cancellationToken)
+    public async Task<IActionResult> Index([FromQuery] string? pageToken, CancellationToken cancellationToken)
     {
         var status = await oauthService.GetConnectionStatusAsync(cancellationToken);
 
         YouTubeChannelDto? channel = null;
         IReadOnlyList<YouTubeVideoDto> videos = [];
+        IReadOnlyDictionary<string, VideoDashboardStatus> videoStatuses = new Dictionary<string, VideoDashboardStatus>();
+        string? nextPageToken = null;
+        string? prevPageToken = null;
         string? loadError = null;
 
         if (status.Connected)
@@ -44,8 +52,18 @@ public sealed class HomeController(
             {
                 channel = await youTubeReadService.GetAuthenticatedChannelAsync(cancellationToken);
                 var list = await youTubeReadService.GetLatestVideosAsync(
-                    maxResults: 10, includeDetails: true, cancellationToken);
-                videos = list.Videos;
+                    maxResults: 10, includeDetails: true, pageToken, cancellationToken);
+
+                // Livestreams that are still running (or otherwise unfinished) report a 0:00
+                // duration until YouTube finishes processing them - not useful to analyze yet, so
+                // hide them rather than showing a confusing "00:00" row. This can leave a page with
+                // fewer than 10 rows; acceptable for this admin-only dashboard.
+                videos = list.Videos.Where(v => v.Details?.Duration != TimeSpan.Zero).ToList();
+                nextPageToken = list.NextPageToken;
+                prevPageToken = list.PrevPageToken;
+
+                videoStatuses = await analysisService.GetDashboardStatusesAsync(
+                    videos.Select(v => v.VideoId).ToList(), cancellationToken);
             }
             catch (NoYouTubeChannelException ex)
             {
@@ -70,6 +88,9 @@ public sealed class HomeController(
                 : [],
             Channel = channel,
             Videos = videos,
+            VideoStatuses = videoStatuses,
+            NextPageToken = nextPageToken,
+            PrevPageToken = prevPageToken,
             LoadError = loadError
         };
 
@@ -217,13 +238,95 @@ public sealed class HomeController(
             });
         }
 
+        var successMessage = result switch
+        {
+            { ThumbnailAttempted: true, ThumbnailPublished: true } =>
+                "Published title, description and thumbnail to YouTube.",
+            { ThumbnailAttempted: true, ThumbnailPublished: false } =>
+                $"Published title and description, but the thumbnail upload failed: {result.ThumbnailError}",
+            _ => "Published to YouTube."
+        };
+
         return Redirect(QueryHelpers.AddQueryString(
             $"/videos/{videoId}/analysis",
             new Dictionary<string, string?>
             {
                 ["analysisId"] = analysisId.ToString(),
-                ["success"] = "Published to YouTube."
+                [result.ThumbnailAttempted && !result.ThumbnailPublished ? "error" : "success"] = successMessage
             }));
+    }
+
+    /// <summary>
+    /// Saves an edited thumbnail prompt as a draft. Makes no image-generation API call - distinct
+    /// from <see cref="GenerateThumbnail"/>, so edits can be saved without spending a generation.
+    /// </summary>
+    [HttpPost("/videos/{videoId}/analysis/{analysisId:guid}/thumbnail/prompt")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> SaveThumbnailPrompt(
+        string videoId, Guid analysisId, [FromForm] string imagePrompt, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(imagePrompt))
+        {
+            return Redirect(QueryHelpers.AddQueryString(
+                $"/videos/{videoId}/analysis", new Dictionary<string, string?>
+                {
+                    ["analysisId"] = analysisId.ToString(),
+                    ["error"] = "Enter an image prompt before saving."
+                }));
+        }
+
+        await analysisService.SaveThumbnailPromptAsync(videoId, analysisId, imagePrompt, cancellationToken);
+
+        return Redirect(QueryHelpers.AddQueryString(
+            $"/videos/{videoId}/analysis", new Dictionary<string, string?>
+            {
+                ["analysisId"] = analysisId.ToString(),
+                ["success"] = "Thumbnail prompt saved (no image generated)."
+            }));
+    }
+
+    /// <summary>
+    /// Generates a thumbnail image via the configured provider (see <see cref="ThumbnailOptions"/>)
+    /// from the (possibly hand-edited) prompt and saves it to the analysis. The prompt is saved
+    /// first, before the image call runs, so an edit is never lost even if generation fails.
+    /// </summary>
+    [HttpPost("/videos/{videoId}/analysis/{analysisId:guid}/thumbnail")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> GenerateThumbnail(
+        string videoId, Guid analysisId, [FromForm] string imagePrompt, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(imagePrompt))
+        {
+            return Redirect(QueryHelpers.AddQueryString(
+                $"/videos/{videoId}/analysis", new Dictionary<string, string?>
+                {
+                    ["analysisId"] = analysisId.ToString(),
+                    ["error"] = "Enter an image prompt before generating a thumbnail."
+                }));
+        }
+
+        try
+        {
+            await analysisService.GenerateThumbnailImageAsync(videoId, analysisId, imagePrompt, cancellationToken);
+
+            return Redirect(QueryHelpers.AddQueryString(
+                $"/videos/{videoId}/analysis", new Dictionary<string, string?>
+                {
+                    ["analysisId"] = analysisId.ToString(),
+                    ["success"] = "Thumbnail image generated."
+                }));
+        }
+        catch (ThumbnailGenerationException ex)
+        {
+            logger.LogWarning(ex, "Thumbnail generation failed for video {VideoId}.", videoId);
+
+            return Redirect(QueryHelpers.AddQueryString(
+                $"/videos/{videoId}/analysis", new Dictionary<string, string?>
+                {
+                    ["analysisId"] = analysisId.ToString(),
+                    ["error"] = $"Thumbnail generation failed: {ex.Message}"
+                }));
+        }
     }
 
     /// <summary>
@@ -278,14 +381,30 @@ public sealed class HomeController(
             History = history,
             Selected = selected,
             PrefilledDescription = prefilled,
+            ThumbnailProviderLabel = BuildThumbnailProviderLabel(),
             FlashSuccess = Request.Query["success"] is { Count: > 0 } s ? s.ToString() : null,
             FlashError = Request.Query["error"] is { Count: > 0 } e ? e.ToString() : null
         };
     }
 
+    private string BuildThumbnailProviderLabel() => thumbnailOptions.Value.Provider switch
+    {
+        ThumbnailProvider.OpenAi => $"OpenAI ({openAiImageOptions.Value.Model})",
+        _ => $"Ideogram ({ideogramOptions.Value.Model})"
+    };
+
     private static string BuildPrefilledDescription(VideoAnalysis analysis)
     {
-        var description = analysis.EditedDescription ?? analysis.OptimizedDescription ?? string.Empty;
+        if (analysis.EditedDescription is { } edited)
+        {
+            // Once a draft has been saved, it is authoritative and may already include a
+            // "Chapters:" block the client-side checkboxes built before submit - return it
+            // verbatim. Re-appending a fresh chapters block here on every page load was the
+            // cause of chapters appearing duplicated after Save Draft.
+            return edited;
+        }
+
+        var description = analysis.OptimizedDescription ?? string.Empty;
         var includedChapters = analysis.Chapters.Where(c => c.Included).ToList();
 
         if (includedChapters.Count == 0)

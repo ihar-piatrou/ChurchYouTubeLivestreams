@@ -73,6 +73,7 @@ public sealed class YouTubeReadService(
     public async Task<YouTubeVideoListDto> GetLatestVideosAsync(
         int maxResults = 10,
         bool includeDetails = false,
+        string? pageToken = null,
         CancellationToken cancellationToken = default)
     {
         var requested = Math.Clamp(maxResults, 1, MaxPageSize);
@@ -88,14 +89,15 @@ public sealed class YouTubeReadService(
 
         // playlistItems.list costs 1 quota unit and already carries the title, description,
         // thumbnails and publish time. search.list would cost 100 units for the same answer.
-        var items = await ExecuteAsync(
+        var (items, nextPageToken, prevPageToken) = await ExecuteAsync(
             async (api, ct) =>
             {
                 var request = api.PlaylistItems.List("snippet,contentDetails");
                 request.PlaylistId = uploadsPlaylistId;
                 request.MaxResults = requested;
+                request.PageToken = pageToken;
                 var response = await request.ExecuteAsync(ct);
-                return response.Items ?? [];
+                return (response.Items ?? [], response.NextPageToken, response.PrevPageToken);
             },
             "listing the uploads playlist",
             cancellationToken);
@@ -138,7 +140,9 @@ public sealed class YouTubeReadService(
             ChannelId = channel.Id,
             UploadsPlaylistId = uploadsPlaylistId,
             Count = videos.Count,
-            Videos = videos
+            Videos = videos,
+            NextPageToken = nextPageToken,
+            PrevPageToken = prevPageToken
         };
     }
 

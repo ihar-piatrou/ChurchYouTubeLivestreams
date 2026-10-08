@@ -3,6 +3,7 @@ using ChurchYouTubeAssistant.Exceptions;
 using Google;
 using Google.Apis.Auth.OAuth2;
 using Google.Apis.Services;
+using Google.Apis.Upload;
 using GoogleYouTubeService = Google.Apis.YouTube.v3.YouTubeService;
 
 namespace ChurchYouTubeAssistant.Services;
@@ -53,6 +54,36 @@ public sealed class YouTubeWriteService(
             cancellationToken);
 
         logger.LogInformation("Published updated title/description to YouTube for video {VideoId}.", videoId);
+    }
+
+    public async Task SetThumbnailAsync(
+        string videoId, byte[] imageData, string contentType, CancellationToken cancellationToken = default)
+    {
+        await ExecuteAsync(
+            async (api, ct) =>
+            {
+                using var stream = new MemoryStream(imageData);
+                var uploadRequest = api.Thumbnails.Set(videoId, stream, contentType);
+
+                var progress = await uploadRequest.UploadAsync(ct);
+                if (progress.Status == UploadStatus.Failed)
+                {
+                    // Same "rethrow the Google exception so the shared mapping/retry logic
+                    // applies" pattern used for captions.download.
+                    if (progress.Exception is GoogleApiException googleEx)
+                    {
+                        throw googleEx;
+                    }
+
+                    throw new YouTubeIntegrationException("Uploading the thumbnail image failed.", progress.Exception);
+                }
+
+                return true;
+            },
+            "setting the video thumbnail",
+            cancellationToken);
+
+        logger.LogInformation("Published thumbnail image to YouTube for video {VideoId}.", videoId);
     }
 
     private async Task<T> ExecuteAsync<T>(

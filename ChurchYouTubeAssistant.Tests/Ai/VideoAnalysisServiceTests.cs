@@ -26,6 +26,7 @@ public sealed class VideoAnalysisServiceTests : IDisposable
     private readonly Mock<IYouTubeReadService> _readService = new();
     private readonly Mock<IYouTubeWriteService> _writeService = new();
     private readonly Mock<IVideoAnalysisAiService> _aiService = new();
+    private readonly Mock<IThumbnailImageService> _thumbnailService = new();
     private readonly Mock<IVideoAnalysisPromptProvider> _promptProvider = new();
 
     public VideoAnalysisServiceTests()
@@ -54,6 +55,7 @@ public sealed class VideoAnalysisServiceTests : IDisposable
         _readService.Object,
         _writeService.Object,
         _aiService.Object,
+        _thumbnailService.Object,
         _promptProvider.Object,
         Options.Create(new OpenAiOptions { ApiKey = "test", Model = "gpt-5" }),
         new VideoAnalysisValidator(),
@@ -224,6 +226,147 @@ public sealed class VideoAnalysisServiceTests : IDisposable
 
         await Assert.ThrowsAsync<VideoAnalysisNotFoundException>(() =>
             service.PublishAsync("vid1", Guid.NewGuid(), new PublishRequest { Title = "t", Description = "d" }));
+    }
+
+    [Fact]
+    public async Task SaveThumbnailPromptAsync_SavesPromptWithoutCallingIdeogram()
+    {
+        var analysis = new VideoAnalysis
+        {
+            Id = Guid.NewGuid(), VideoId = "vid1", OriginalTitle = "t", OriginalDescription = "d",
+            Model = "gpt-5", PromptVersion = "v1", Status = AnalysisStatus.Succeeded, CreatedAtUtc = DateTimeOffset.UtcNow
+        };
+        _db.VideoAnalyses.Add(analysis);
+        await _db.SaveChangesAsync();
+
+        var service = CreateService();
+        var result = await service.SaveThumbnailPromptAsync("vid1", analysis.Id, "a draft prompt");
+
+        Assert.Equal("a draft prompt", result.EditedThumbnailPrompt);
+        Assert.Null(result.ThumbnailImageData);
+
+        var reloaded = await _db.VideoAnalyses.FirstAsync(a => a.Id == analysis.Id);
+        Assert.Equal("a draft prompt", reloaded.EditedThumbnailPrompt);
+
+        _thumbnailService.Verify(
+            s => s.GenerateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GenerateThumbnailImageAsync_SavesEditedPromptBeforeCallingIdeogram()
+    {
+        var analysis = new VideoAnalysis
+        {
+            Id = Guid.NewGuid(), VideoId = "vid1", OriginalTitle = "t", OriginalDescription = "d",
+            Model = "gpt-5", PromptVersion = "v1", Status = AnalysisStatus.Succeeded, CreatedAtUtc = DateTimeOffset.UtcNow
+        };
+        _db.VideoAnalyses.Add(analysis);
+        await _db.SaveChangesAsync();
+
+        _thumbnailService.Setup(s => s.GenerateAsync("an edited prompt", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ThumbnailImageResult([1, 2, 3], "image/png"));
+
+        var service = CreateService();
+        var result = await service.GenerateThumbnailImageAsync("vid1", analysis.Id, "an edited prompt");
+
+        Assert.Equal("an edited prompt", result.EditedThumbnailPrompt);
+        Assert.Equal([1, 2, 3], result.ThumbnailImageData);
+        Assert.Equal("image/png", result.ThumbnailImageContentType);
+        Assert.NotNull(result.ThumbnailImageGeneratedAtUtc);
+
+        var reloaded = await _db.VideoAnalyses.FirstAsync(a => a.Id == analysis.Id);
+        Assert.Equal("an edited prompt", reloaded.EditedThumbnailPrompt);
+        Assert.Equal([1, 2, 3], reloaded.ThumbnailImageData);
+    }
+
+    [Fact]
+    public async Task GenerateThumbnailImageAsync_IdeogramFails_PromptIsStillSavedAndExceptionPropagates()
+    {
+        var analysis = new VideoAnalysis
+        {
+            Id = Guid.NewGuid(), VideoId = "vid1", OriginalTitle = "t", OriginalDescription = "d",
+            Model = "gpt-5", PromptVersion = "v1", Status = AnalysisStatus.Succeeded, CreatedAtUtc = DateTimeOffset.UtcNow
+        };
+        _db.VideoAnalyses.Add(analysis);
+        await _db.SaveChangesAsync();
+
+        _thumbnailService.Setup(s => s.GenerateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ThumbnailGenerationException(ThumbnailGenerationError.RateLimited, "rate limited"));
+
+        var service = CreateService();
+
+        await Assert.ThrowsAsync<ThumbnailGenerationException>(() =>
+            service.GenerateThumbnailImageAsync("vid1", analysis.Id, "my prompt"));
+
+        // The prompt edit is a separate, earlier write - it must survive even though generation failed.
+        var reloaded = await _db.VideoAnalyses.FirstAsync(a => a.Id == analysis.Id);
+        Assert.Equal("my prompt", reloaded.EditedThumbnailPrompt);
+        Assert.Null(reloaded.ThumbnailImageData);
+    }
+
+    [Fact]
+    public async Task PublishAsync_WithGeneratedThumbnail_UploadsItAndMarksPublished()
+    {
+        var analysis = new VideoAnalysis
+        {
+            Id = Guid.NewGuid(), VideoId = "vid1", OriginalTitle = "Original title", OriginalDescription = "Original description.",
+            Model = "gpt-5", PromptVersion = "v1", Status = AnalysisStatus.Succeeded, CreatedAtUtc = DateTimeOffset.UtcNow,
+            ThumbnailImageData = [9, 9, 9], ThumbnailImageContentType = "image/png"
+        };
+        _db.VideoAnalyses.Add(analysis);
+        await _db.SaveChangesAsync();
+
+        _readService.Setup(s => s.GetVideoAsync("vid1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Video("vid1", "Original title", "Original description."));
+
+        var service = CreateService();
+        var result = await service.PublishAsync(
+            "vid1", analysis.Id, new PublishRequest { Title = "New title", Description = "New description." });
+
+        Assert.True(result.Published);
+        Assert.True(result.ThumbnailAttempted);
+        Assert.True(result.ThumbnailPublished);
+        Assert.Null(result.ThumbnailError);
+        _writeService.Verify(w => w.SetThumbnailAsync(
+            "vid1", It.Is<byte[]>(b => b.SequenceEqual(new byte[] { 9, 9, 9 })), "image/png", It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        var reloaded = await _db.VideoAnalyses.FirstAsync(a => a.Id == analysis.Id);
+        Assert.True(reloaded.ThumbnailPublished);
+    }
+
+    [Fact]
+    public async Task PublishAsync_ThumbnailUploadFails_TitleDescriptionStillPublishedWithErrorReported()
+    {
+        var analysis = new VideoAnalysis
+        {
+            Id = Guid.NewGuid(), VideoId = "vid1", OriginalTitle = "Original title", OriginalDescription = "Original description.",
+            Model = "gpt-5", PromptVersion = "v1", Status = AnalysisStatus.Succeeded, CreatedAtUtc = DateTimeOffset.UtcNow,
+            ThumbnailImageData = [1, 2, 3], ThumbnailImageContentType = "image/png"
+        };
+        _db.VideoAnalyses.Add(analysis);
+        await _db.SaveChangesAsync();
+
+        _readService.Setup(s => s.GetVideoAsync("vid1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Video("vid1", "Original title", "Original description."));
+        _writeService.Setup(w => w.SetThumbnailAsync(
+                "vid1", It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new YouTubeIntegrationException("thumbnail upload failed"));
+
+        var service = CreateService();
+        var result = await service.PublishAsync(
+            "vid1", analysis.Id, new PublishRequest { Title = "New title", Description = "New description." });
+
+        // Title/description must still count as published - a thumbnail failure never masks or
+        // rolls back a change YouTube has no way to undo anyway.
+        Assert.True(result.Published);
+        Assert.True(result.ThumbnailAttempted);
+        Assert.False(result.ThumbnailPublished);
+        Assert.Equal("thumbnail upload failed", result.ThumbnailError);
+
+        var reloaded = await _db.VideoAnalyses.FirstAsync(a => a.Id == analysis.Id);
+        Assert.True(reloaded.IsPublished);
+        Assert.False(reloaded.ThumbnailPublished);
     }
 
     // GetHistoryAsync's "newest first" ordering (OrderByDescending(a => a.CreatedAtUtc)) is not

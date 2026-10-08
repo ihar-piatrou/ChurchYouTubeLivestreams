@@ -14,12 +14,40 @@ public sealed class VideoAnalysisService(
     IYouTubeReadService youTubeReadService,
     IYouTubeWriteService youTubeWriteService,
     IVideoAnalysisAiService aiService,
+    IThumbnailImageService thumbnailService,
     IVideoAnalysisPromptProvider promptProvider,
     IOptions<OpenAiOptions> openAiOptions,
     VideoAnalysisValidator validator,
     TimeProvider timeProvider,
     ILogger<VideoAnalysisService> logger) : IVideoAnalysisService
 {
+    public async Task<IReadOnlyDictionary<string, VideoDashboardStatus>> GetDashboardStatusesAsync(
+        IReadOnlyCollection<string> videoIds, CancellationToken cancellationToken = default)
+    {
+        var statuses = videoIds.ToDictionary(id => id, _ => VideoDashboardStatus.NotAnalyzed);
+        if (videoIds.Count == 0)
+        {
+            return statuses;
+        }
+
+        var latestPerVideo = await db.VideoAnalyses
+            .Where(a => videoIds.Contains(a.VideoId))
+            .GroupBy(a => a.VideoId)
+            .Select(g => new
+            {
+                VideoId = g.Key,
+                IsPublished = g.OrderByDescending(a => a.CreatedAtUtc).First().IsPublished
+            })
+            .ToListAsync(cancellationToken);
+
+        foreach (var entry in latestPerVideo)
+        {
+            statuses[entry.VideoId] = entry.IsPublished ? VideoDashboardStatus.Published : VideoDashboardStatus.Analyzed;
+        }
+
+        return statuses;
+    }
+
     public async Task<VideoAnalysis> AnalyzeAsync(string videoId, CancellationToken cancellationToken = default)
     {
         // Snapshot the *current* live metadata, not whatever our own cache happens to hold - the
@@ -111,6 +139,44 @@ public sealed class VideoAnalysisService(
         return analysis;
     }
 
+    public async Task<VideoAnalysis> SaveThumbnailPromptAsync(
+        string videoId, Guid analysisId, string imagePrompt, CancellationToken cancellationToken = default)
+    {
+        var analysis = await db.VideoAnalyses.FirstOrDefaultAsync(
+                a => a.VideoId == videoId && a.Id == analysisId, cancellationToken)
+            ?? throw new VideoAnalysisNotFoundException($"Analysis {analysisId} for video {videoId} was not found.");
+
+        analysis.EditedThumbnailPrompt = imagePrompt;
+        await db.SaveChangesAsync(cancellationToken);
+
+        logger.LogInformation(
+            "Saved edited thumbnail prompt for analysis {AnalysisId} (video {VideoId}); no image generated.",
+            analysisId, videoId);
+
+        return analysis;
+    }
+
+    public async Task<VideoAnalysis> GenerateThumbnailImageAsync(
+        string videoId, Guid analysisId, string imagePrompt, CancellationToken cancellationToken = default)
+    {
+        // Saves the (possibly hand-edited) prompt as its own write, before the image call runs - an
+        // edit the admin made must not be lost just because generation itself then fails.
+        var analysis = await SaveThumbnailPromptAsync(videoId, analysisId, imagePrompt, cancellationToken);
+
+        var image = await thumbnailService.GenerateAsync(imagePrompt, cancellationToken);
+
+        analysis.ThumbnailImageData = image.ImageData;
+        analysis.ThumbnailImageContentType = image.ContentType;
+        analysis.ThumbnailImageGeneratedAtUtc = timeProvider.GetUtcNow();
+        await db.SaveChangesAsync(cancellationToken);
+
+        logger.LogInformation(
+            "Generated thumbnail image for analysis {AnalysisId} (video {VideoId}): {Bytes} bytes, {ContentType}.",
+            analysisId, videoId, image.ImageData.Length, image.ContentType);
+
+        return analysis;
+    }
+
     public async Task<PublishResult> PublishAsync(
         string videoId, Guid analysisId, PublishRequest request, CancellationToken cancellationToken = default)
     {
@@ -151,15 +217,49 @@ public sealed class VideoAnalysisService(
         analysis.PublishedAtUtc = timeProvider.GetUtcNow();
         analysis.PublishedTitle = request.Title;
         analysis.PublishedDescription = request.Description;
+
+        var thumbnailAttempted = false;
+        var thumbnailPublished = false;
+        string? thumbnailError = null;
+
+        if (analysis.ThumbnailImageData is { Length: > 0 } imageData)
+        {
+            thumbnailAttempted = true;
+            try
+            {
+                await youTubeWriteService.SetThumbnailAsync(
+                    videoId, imageData, analysis.ThumbnailImageContentType ?? "image/png", cancellationToken);
+
+                analysis.ThumbnailPublished = true;
+                analysis.ThumbnailPublishedAtUtc = timeProvider.GetUtcNow();
+                thumbnailPublished = true;
+            }
+            catch (YouTubeIntegrationException ex)
+            {
+                // Title/description already succeeded and YouTube has no "undo" for that - a
+                // thumbnail-specific failure is reported separately rather than masking the part
+                // that worked or being treated as if the whole publish failed.
+                logger.LogWarning(
+                    ex, "Title/description published, but setting the thumbnail failed for video {VideoId}.", videoId);
+                thumbnailError = ex.Message;
+            }
+        }
+
         await db.SaveChangesAsync(cancellationToken);
 
-        logger.LogInformation("Published analysis {AnalysisId} for video {VideoId} to YouTube.", analysisId, videoId);
+        logger.LogInformation(
+            "Published analysis {AnalysisId} for video {VideoId} to YouTube (thumbnail: {ThumbnailOutcome}).",
+            analysisId, videoId,
+            !thumbnailAttempted ? "none generated" : thumbnailPublished ? "published" : "failed");
 
         return new PublishResult
         {
             Published = true,
             ConflictDetected = conflict,
-            Analysis = analysis
+            Analysis = analysis,
+            ThumbnailAttempted = thumbnailAttempted,
+            ThumbnailPublished = thumbnailPublished,
+            ThumbnailError = thumbnailError
         };
     }
 

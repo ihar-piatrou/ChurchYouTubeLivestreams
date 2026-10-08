@@ -108,6 +108,7 @@ h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
 }
 .badge-ok { background: var(--ok-bg); color: var(--ok-text); }
 .badge-off { background: var(--err-bg); color: var(--err-text); }
+.badge-warn { background: var(--warn-bg); color: var(--warn-text); }
 
 .channel { display: flex; gap: 1rem; align-items: flex-start; }
 .channel img { width: 88px; height: 88px; border-radius: 50%; flex-shrink: 0; }

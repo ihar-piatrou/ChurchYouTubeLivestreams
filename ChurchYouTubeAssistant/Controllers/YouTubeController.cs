@@ -64,6 +64,7 @@ public sealed class YouTubeController(
     public async Task<ActionResult<YouTubeVideoListDto>> GetVideos(
         [FromQuery] int maxResults = 10,
         [FromQuery] bool includeDetails = false,
+        [FromQuery] string? pageToken = null,
         CancellationToken cancellationToken = default)
     {
         if (maxResults is < 1 or > 50)
@@ -74,7 +75,7 @@ public sealed class YouTubeController(
             }));
         }
 
-        return Ok(await youTubeReadService.GetLatestVideosAsync(maxResults, includeDetails, cancellationToken));
+        return Ok(await youTubeReadService.GetLatestVideosAsync(maxResults, includeDetails, pageToken, cancellationToken));
     }
 
     /// <summary>

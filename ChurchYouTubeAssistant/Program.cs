@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using OpenAI;
 using OpenAI.Chat;
+using OpenAI.Images;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -34,6 +35,25 @@ builder.Services
     .ValidateOnStart();
 
 builder.Services.AddSingleton<IValidateOptions<OpenAiOptions>, OpenAiOptionsValidator>();
+
+// Ideogram:ApiKey - same User Secrets pattern as OpenAI above. No ValidateOnStart: only the
+// provider actually selected by ThumbnailOptions.Provider needs its key configured, and the app
+// must keep starting if the other one is left unset.
+builder.Services
+    .AddOptions<IdeogramOptions>()
+    .Bind(builder.Configuration.GetSection(IdeogramOptions.SectionName));
+
+// Reuses OpenAI:ApiKey (see OpenAiOptions above) - no separate key to configure.
+builder.Services
+    .AddOptions<OpenAiImageOptions>()
+    .Bind(builder.Configuration.GetSection(OpenAiImageOptions.SectionName));
+
+// Thumbnail:Provider picks which of the two image services below actually handles
+// IThumbnailImageService calls. No ValidateOnStart - Ideogram is the default and already has no
+// required-at-startup validation.
+builder.Services
+    .AddOptions<ThumbnailOptions>()
+    .Bind(builder.Configuration.GetSection(ThumbnailOptions.SectionName));
 
 // ---------------------------------------------------------------------------------------------
 // Application services
@@ -92,6 +112,47 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<IVideoAnalysisAiService, OpenAiVideoAnalysisService>();
 builder.Services.AddSingleton<VideoAnalysisValidator>();
 builder.Services.AddScoped<IVideoAnalysisService, VideoAnalysisService>();
+
+// Typed HttpClient for Ideogram (thumbnail image generation). The request timeout is enforced by
+// IdeogramThumbnailService's own CancellationTokenSource, not the HttpClient.Timeout default,
+// matching the same deliberate pattern used for the OpenAI client. Registered as its own concrete
+// type (not IThumbnailImageService) because which provider actually serves that interface is
+// decided below, based on ThumbnailOptions.Provider.
+builder.Services.AddHttpClient<IdeogramThumbnailService>(client =>
+{
+    client.BaseAddress = new Uri("https://api.ideogram.ai/");
+    client.Timeout = Timeout.InfiniteTimeSpan;
+});
+
+// Same NetworkTimeout/no-retry reasoning as the ChatClient registration above, using
+// OpenAiImageOptions:RequestTimeout instead since image generation has its own timeout budget.
+builder.Services.AddSingleton(sp =>
+{
+    var chatOpts = sp.GetRequiredService<IOptions<OpenAiOptions>>().Value;
+    var imageOpts = sp.GetRequiredService<IOptions<OpenAiImageOptions>>().Value;
+
+    var clientOptions = new OpenAIClientOptions
+    {
+        NetworkTimeout = imageOpts.RequestTimeout,
+        RetryPolicy = new System.ClientModel.Primitives.ClientRetryPolicy(maxRetries: 0)
+    };
+
+    return new ImageClient(imageOpts.Model, new System.ClientModel.ApiKeyCredential(chatOpts.ApiKey), clientOptions);
+});
+builder.Services.AddSingleton<OpenAiThumbnailImageService>();
+
+// IThumbnailImageService itself: a thin factory over whichever concrete provider
+// Thumbnail:Provider selects. Resolved lazily, so only the selected provider's dependencies
+// (and thus its API key) actually need to be configured.
+builder.Services.AddSingleton<IThumbnailImageService>(sp =>
+{
+    var provider = sp.GetRequiredService<IOptions<ThumbnailOptions>>().Value.Provider;
+    return provider switch
+    {
+        ThumbnailProvider.OpenAi => sp.GetRequiredService<OpenAiThumbnailImageService>(),
+        _ => sp.GetRequiredService<IdeogramThumbnailService>()
+    };
+});
 
 // ---------------------------------------------------------------------------------------------
 // Web

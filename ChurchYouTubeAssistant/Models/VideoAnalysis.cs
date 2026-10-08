@@ -43,6 +43,12 @@ public sealed class VideoAnalysis
     public string? EditedTitle { get; set; }
     public string? EditedDescription { get; set; }
 
+    /// <summary>
+    /// Admin-edited thumbnail image prompt, saved before image generation runs - generation always
+    /// uses this value once it exists, never silently falling back to Thumbnail.ImagePrompt.
+    /// </summary>
+    public string? EditedThumbnailPrompt { get; set; }
+
     // --- Audit / provenance ---
     public string? RawOpenAiResponse { get; set; }
     public required string Model { get; set; }
@@ -59,9 +65,18 @@ public sealed class VideoAnalysis
 
     public required DateTimeOffset CreatedAtUtc { get; set; }
 
-    // --- Publication ---
+    // --- Publication (title/description) ---
     public bool IsPublished { get; set; }
     public DateTimeOffset? PublishedAtUtc { get; set; }
     public string? PublishedTitle { get; set; }
     public string? PublishedDescription { get; set; }
+
+    // --- Generated thumbnail image (via Ideogram, from Thumbnail.ImagePrompt) ---
+    public byte[]? ThumbnailImageData { get; set; }
+    public string? ThumbnailImageContentType { get; set; }
+    public DateTimeOffset? ThumbnailImageGeneratedAtUtc { get; set; }
+
+    /// <summary>Whether the generated image has been uploaded as the video's live YouTube thumbnail.</summary>
+    public bool ThumbnailPublished { get; set; }
+    public DateTimeOffset? ThumbnailPublishedAtUtc { get; set; }
 }
