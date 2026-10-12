@@ -6,6 +6,7 @@ using ChurchYouTubeAssistant.Models.ViewModels;
 using ChurchYouTubeAssistant.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace ChurchYouTubeAssistant.Controllers;
@@ -28,6 +29,8 @@ public sealed class HomeController(
     IGoogleOAuthService oauthService,
     IYouTubeReadService youTubeReadService,
     IVideoAnalysisService analysisService,
+    IBackgroundJobTracker jobTracker,
+    IBackgroundTaskQueue taskQueue,
     IOptions<ThumbnailOptions> thumbnailOptions,
     IOptions<IdeogramOptions> ideogramOptions,
     IOptions<OpenAiImageOptions> openAiImageOptions,
@@ -153,44 +156,70 @@ public sealed class HomeController(
     /// </summary>
     [HttpGet("/videos/{videoId}/analysis")]
     public async Task<IActionResult> Analysis(
-        string videoId, [FromQuery] Guid? analysisId, CancellationToken cancellationToken)
+        string videoId, [FromQuery] Guid? analysisId, [FromQuery] Guid? jobId, CancellationToken cancellationToken)
     {
+        // A finished job's own redirect URL already encodes the success/error flash - follow it
+        // rather than rendering a "waiting" page for a job that is no longer actually running
+        // (e.g. the browser reopened this exact URL after the job had already completed).
+        if (jobId is { } id && jobTracker.Get(id) is { State: BackgroundJobState.Done, RedirectUrl: { } url })
+        {
+            return Redirect(url);
+        }
+
         var history = await analysisService.GetHistoryAsync(videoId, cancellationToken);
-        var selected = analysisId is { } id
-            ? history.FirstOrDefault(a => a.Id == id)
+        var selected = analysisId is { } aid
+            ? history.FirstOrDefault(a => a.Id == aid)
             : history.FirstOrDefault();
 
         return View(BuildAnalysisViewModel(videoId, history, selected));
     }
 
     /// <summary>
-    /// Runs a new AI analysis. A synchronous full-page request: OpenAI calls can take tens of
-    /// seconds for a full sermon, which is an acceptable wait for an admin-triggered action, but a
-    /// live progress indicator (via an async job + polling) would be a reasonable future upgrade.
+    /// Starts a new AI analysis as a background job and redirects immediately to the analysis
+    /// page with a job id - that page polls <see cref="JobStatus"/> and shows a waiting bar until
+    /// the job finishes, rather than this request blocking for however long the OpenAI call takes.
     /// </summary>
     [HttpPost("/videos/{videoId}/analysis/analyze")]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> AnalyzeVideo(string videoId, CancellationToken cancellationToken)
+    public IActionResult AnalyzeVideo(string videoId)
     {
-        try
+        var jobId = jobTracker.Create();
+
+        taskQueue.Enqueue(async (services, ct) =>
         {
-            var analysis = await analysisService.AnalyzeAsync(videoId, cancellationToken);
-            return Redirect(QueryHelpers.AddQueryString(
-                $"/videos/{videoId}/analysis", new Dictionary<string, string?>
-                {
-                    ["analysisId"] = analysis.Id.ToString(),
-                    ["success"] = analysis.Status == AnalysisStatus.Succeeded
-                        ? "Analysis complete."
-                        : $"Analysis completed with some issues (status: {analysis.Status})."
-                }));
-        }
-        catch (Exception ex) when (ex is Exceptions.AiAnalysisException or YouTubeNotConnectedException
-            or TranscriptNotAvailableException or YouTubeIntegrationException)
-        {
-            logger.LogWarning(ex, "AI analysis failed for video {VideoId}.", videoId);
-            return Redirect(QueryHelpers.AddQueryString(
-                $"/videos/{videoId}/analysis", "error", $"Analysis failed: {ex.Message}"));
-        }
+            jobTracker.MarkRunning(jobId);
+            var scopedAnalysisService = services.GetRequiredService<IVideoAnalysisService>();
+
+            string redirectUrl;
+            try
+            {
+                var analysis = await scopedAnalysisService.AnalyzeAsync(videoId, ct);
+                redirectUrl = QueryHelpers.AddQueryString(
+                    $"/videos/{videoId}/analysis", new Dictionary<string, string?>
+                    {
+                        ["analysisId"] = analysis.Id.ToString(),
+                        ["success"] = analysis.Status == AnalysisStatus.Succeeded
+                            ? "Analysis complete."
+                            : $"Analysis completed with some issues (status: {analysis.Status})."
+                    });
+            }
+            catch (Exception ex) when (ex is Exceptions.AiAnalysisException or YouTubeNotConnectedException
+                or TranscriptNotAvailableException or YouTubeIntegrationException)
+            {
+                logger.LogWarning(ex, "AI analysis failed for video {VideoId}.", videoId);
+                redirectUrl = QueryHelpers.AddQueryString(
+                    $"/videos/{videoId}/analysis", "error", $"Analysis failed: {ex.Message}");
+            }
+
+            jobTracker.Complete(jobId, redirectUrl);
+        });
+
+        return Redirect(QueryHelpers.AddQueryString(
+            $"/videos/{videoId}/analysis", new Dictionary<string, string?>
+            {
+                ["jobId"] = jobId.ToString(),
+                ["job"] = "analyze"
+            }));
     }
 
     /// <summary>
@@ -287,13 +316,14 @@ public sealed class HomeController(
 
     /// <summary>
     /// Generates a thumbnail image via the configured provider (see <see cref="ThumbnailOptions"/>)
-    /// from the (possibly hand-edited) prompt and saves it to the analysis. The prompt is saved
-    /// first, before the image call runs, so an edit is never lost even if generation fails.
+    /// as a background job, redirecting immediately to the analysis page with a job id - that page
+    /// polls <see cref="JobStatus"/> and shows a waiting bar until the job finishes. The prompt is
+    /// saved first, before the image call runs, so an edit is never lost even if generation fails
+    /// (see <see cref="IVideoAnalysisService.GenerateThumbnailImageAsync"/>).
     /// </summary>
     [HttpPost("/videos/{videoId}/analysis/{analysisId:guid}/thumbnail")]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> GenerateThumbnail(
-        string videoId, Guid analysisId, [FromForm] string imagePrompt, CancellationToken cancellationToken)
+    public IActionResult GenerateThumbnail(string videoId, Guid analysisId, [FromForm] string imagePrompt)
     {
         if (string.IsNullOrWhiteSpace(imagePrompt))
         {
@@ -305,28 +335,58 @@ public sealed class HomeController(
                 }));
         }
 
-        try
-        {
-            await analysisService.GenerateThumbnailImageAsync(videoId, analysisId, imagePrompt, cancellationToken);
+        var jobId = jobTracker.Create();
 
-            return Redirect(QueryHelpers.AddQueryString(
-                $"/videos/{videoId}/analysis", new Dictionary<string, string?>
-                {
-                    ["analysisId"] = analysisId.ToString(),
-                    ["success"] = "Thumbnail image generated."
-                }));
-        }
-        catch (ThumbnailGenerationException ex)
+        taskQueue.Enqueue(async (services, ct) =>
         {
-            logger.LogWarning(ex, "Thumbnail generation failed for video {VideoId}.", videoId);
+            jobTracker.MarkRunning(jobId);
+            var scopedAnalysisService = services.GetRequiredService<IVideoAnalysisService>();
 
-            return Redirect(QueryHelpers.AddQueryString(
-                $"/videos/{videoId}/analysis", new Dictionary<string, string?>
-                {
-                    ["analysisId"] = analysisId.ToString(),
-                    ["error"] = $"Thumbnail generation failed: {ex.Message}"
-                }));
+            string redirectUrl;
+            try
+            {
+                await scopedAnalysisService.GenerateThumbnailImageAsync(videoId, analysisId, imagePrompt, ct);
+                redirectUrl = QueryHelpers.AddQueryString(
+                    $"/videos/{videoId}/analysis", new Dictionary<string, string?>
+                    {
+                        ["analysisId"] = analysisId.ToString(),
+                        ["success"] = "Thumbnail image generated."
+                    });
+            }
+            catch (ThumbnailGenerationException ex)
+            {
+                logger.LogWarning(ex, "Thumbnail generation failed for video {VideoId}.", videoId);
+                redirectUrl = QueryHelpers.AddQueryString(
+                    $"/videos/{videoId}/analysis", new Dictionary<string, string?>
+                    {
+                        ["analysisId"] = analysisId.ToString(),
+                        ["error"] = $"Thumbnail generation failed: {ex.Message}"
+                    });
+            }
+
+            jobTracker.Complete(jobId, redirectUrl);
+        });
+
+        return Redirect(QueryHelpers.AddQueryString(
+            $"/videos/{videoId}/analysis", new Dictionary<string, string?>
+            {
+                ["analysisId"] = analysisId.ToString(),
+                ["jobId"] = jobId.ToString(),
+                ["job"] = "thumbnail"
+            }));
+    }
+
+    /// <summary>Polling endpoint the Analysis page's waiting bar JavaScript calls every few seconds.</summary>
+    [HttpGet("/jobs/{jobId:guid}/status")]
+    public IActionResult JobStatus(Guid jobId)
+    {
+        var status = jobTracker.Get(jobId);
+        if (status is null)
+        {
+            return NotFound();
         }
+
+        return Json(new JobStatusResponse(status.State.ToString(), status.RedirectUrl));
     }
 
     /// <summary>
@@ -382,6 +442,8 @@ public sealed class HomeController(
             Selected = selected,
             PrefilledDescription = prefilled,
             ThumbnailProviderLabel = BuildThumbnailProviderLabel(),
+            PendingJobId = Guid.TryParse(Request.Query["jobId"], out var jobId) ? jobId : null,
+            PendingJobKind = Request.Query["job"] is { Count: > 0 } jk ? jk.ToString() : null,
             FlashSuccess = Request.Query["success"] is { Count: > 0 } s ? s.ToString() : null,
             FlashError = Request.Query["error"] is { Count: > 0 } e ? e.ToString() : null
         };

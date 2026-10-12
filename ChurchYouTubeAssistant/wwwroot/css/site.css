@@ -99,6 +99,27 @@ h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
 }
 
 .status-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+
+/* Indeterminate progress bar for background jobs (Analyze / Generate Thumbnail): these AI calls
+   report no real percentage, so this animates a sliding fill rather than claiming a false one. */
+.progress-bar {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--border);
+    overflow: hidden;
+    margin-top: 0.5rem;
+}
+.progress-bar-fill {
+    height: 100%;
+    width: 40%;
+    border-radius: 999px;
+    background: var(--ok-text);
+    animation: progress-bar-slide 1.4s ease-in-out infinite;
+}
+@keyframes progress-bar-slide {
+    0% { margin-left: -40%; }
+    100% { margin-left: 100%; }
+}
 .badge {
     display: inline-block;
     padding: 0.15rem 0.6rem;

@@ -61,6 +61,13 @@ builder.Services
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddMemoryCache();
 
+// Background jobs for "Analyze" / "Generate Thumbnail": the HTTP request enqueues work and
+// returns immediately with a job id; QueuedHostedService runs it; the Analysis page polls
+// IBackgroundJobTracker for completion instead of the request itself blocking for the AI call.
+builder.Services.AddSingleton<IBackgroundTaskQueue, BackgroundTaskQueue>();
+builder.Services.AddHostedService<QueuedHostedService>();
+builder.Services.AddSingleton<IBackgroundJobTracker, MemoryCacheBackgroundJobTracker>();
+
 // Pending OAuth state values. In-process today; swap for a distributed cache when scaled out.
 builder.Services.AddSingleton<IOAuthStateStore, MemoryCacheOAuthStateStore>();
 

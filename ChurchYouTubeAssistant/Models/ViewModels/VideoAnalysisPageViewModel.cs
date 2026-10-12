@@ -23,6 +23,17 @@ public sealed record VideoAnalysisPageViewModel
     public string? FlashError { get; init; }
     public string? FlashSuccess { get; init; }
 
+    /// <summary>
+    /// Set while an "Analyze" or "Generate Thumbnail" background job for this video is still
+    /// pending/running - the view renders a waiting bar and polls <c>/jobs/{id}/status</c> instead
+    /// of the normal success/error flash. Null once the job is done (the controller redirects away
+    /// from the job URL at that point, so the view never actually has to render a finished job).
+    /// </summary>
+    public Guid? PendingJobId { get; init; }
+
+    /// <summary>"analyze" or "thumbnail" - which action's waiting message/copy to show.</summary>
+    public string? PendingJobKind { get; init; }
+
     public bool ConflictDetected { get; init; }
     public string? ConflictDetail { get; init; }
     public string? ConflictLiveTitle { get; init; }

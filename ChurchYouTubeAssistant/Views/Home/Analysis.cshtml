@@ -17,6 +17,35 @@
     <div class="alert alert-error">@Model.FlashError</div>
 }
 
+@if (Model.PendingJobId is { } pendingJobId)
+{
+    <div class="card">
+        <p>
+            @(Model.PendingJobKind == "thumbnail" ? "Generating thumbnail image..." : "Running AI analysis...")
+            This can take up to a minute or two - this page updates automatically when it's done.
+        </p>
+        <div class="progress-bar"><div class="progress-bar-fill"></div></div>
+    </div>
+    <script>
+        (function () {
+            var jobId = '@pendingJobId';
+            function poll() {
+                fetch('/jobs/' + jobId + '/status')
+                    .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+                    .then(function (data) {
+                        if (data.state === 'Done') {
+                            window.location.href = data.redirectUrl;
+                        } else {
+                            setTimeout(poll, 2000);
+                        }
+                    })
+                    .catch(function () { setTimeout(poll, 3000); });
+            }
+            setTimeout(poll, 2000);
+        })();
+    </script>
+}
+
 <div class="card">
     <div class="status-row">
         @if (Model.History.Count > 0)
