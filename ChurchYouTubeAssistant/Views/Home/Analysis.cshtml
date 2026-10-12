@@ -110,10 +110,10 @@
             foreach (var alt in a.AlternativeTitles)
             {
                 <button type="button" class="btn btn-secondary" style="margin:0.2rem 0.3rem 0 0;font-size:0.85rem;"
+                        data-title="@alt"
                         onclick="document.getElementById('title-input').value = this.dataset.title">
                     @alt
                 </button>
-                <span style="display:none" data-title="@alt"></span>
             }
         }
 
