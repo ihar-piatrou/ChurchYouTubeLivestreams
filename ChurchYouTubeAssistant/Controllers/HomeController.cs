@@ -31,6 +31,7 @@ public sealed class HomeController(
     IVideoAnalysisService analysisService,
     IBackgroundJobTracker jobTracker,
     IBackgroundTaskQueue taskQueue,
+    IVideoAnalysisProgressTracker progressTracker,
     IOptions<ThumbnailOptions> thumbnailOptions,
     IOptions<IdeogramOptions> ideogramOptions,
     IOptions<OpenAiImageOptions> openAiImageOptions,
@@ -65,8 +66,19 @@ public sealed class HomeController(
                 nextPageToken = list.NextPageToken;
                 prevPageToken = list.PrevPageToken;
 
-                videoStatuses = await analysisService.GetDashboardStatusesAsync(
-                    videos.Select(v => v.VideoId).ToList(), cancellationToken);
+                var videoIds = videos.Select(v => v.VideoId).ToList();
+                videoStatuses = await analysisService.GetDashboardStatusesAsync(videoIds, cancellationToken);
+
+                // Overlay "Analyzing" for any video with a job currently in flight (single or
+                // batch) - overrides whatever the DB-derived status above says, so the dashboard
+                // never shows a stale pre-job status while a job is actually running.
+                var inProgress = progressTracker.GetInProgress(videoIds);
+                if (inProgress.Count > 0)
+                {
+                    videoStatuses = videoStatuses.ToDictionary(
+                        kv => kv.Key,
+                        kv => inProgress.Contains(kv.Key) ? VideoDashboardStatus.Analyzing : kv.Value);
+                }
             }
             catch (NoYouTubeChannelException ex)
             {
@@ -184,6 +196,7 @@ public sealed class HomeController(
     public IActionResult AnalyzeVideo(string videoId)
     {
         var jobId = jobTracker.Create();
+        progressTracker.MarkStarted(videoId);
 
         taskQueue.Enqueue(async (services, ct) =>
         {
@@ -210,6 +223,10 @@ public sealed class HomeController(
                 redirectUrl = QueryHelpers.AddQueryString(
                     $"/videos/{videoId}/analysis", "error", $"Analysis failed: {ex.Message}");
             }
+            finally
+            {
+                progressTracker.MarkFinished(videoId);
+            }
 
             jobTracker.Complete(jobId, redirectUrl);
         });
@@ -219,6 +236,52 @@ public sealed class HomeController(
             {
                 ["jobId"] = jobId.ToString(),
                 ["job"] = "analyze"
+            }));
+    }
+
+    /// <summary>
+    /// Queues an AI analysis for each of several selected videos at once (the dashboard's
+    /// checkbox-select + "Analyze selected" action), then redirects straight back to the
+    /// dashboard - there is no single analysis page to wait on for a batch, so this does not use
+    /// <see cref="IBackgroundJobTracker"/>'s single-job polling flow; each video's dashboard badge
+    /// instead flips to "Analyzing..." (via <see cref="IVideoAnalysisProgressTracker"/>) and then
+    /// to its final status as that video's job finishes, visible on the next page load/refresh.
+    /// </summary>
+    [HttpPost("/videos/analyze-batch")]
+    [ValidateAntiForgeryToken]
+    public IActionResult AnalyzeBatch([FromForm] List<string> videoIds)
+    {
+        var distinctIds = videoIds.Distinct().ToList();
+
+        foreach (var videoId in distinctIds)
+        {
+            progressTracker.MarkStarted(videoId);
+
+            taskQueue.Enqueue(async (services, ct) =>
+            {
+                var scopedAnalysisService = services.GetRequiredService<IVideoAnalysisService>();
+                try
+                {
+                    await scopedAnalysisService.AnalyzeAsync(videoId, ct);
+                }
+                catch (Exception ex) when (ex is Exceptions.AiAnalysisException or YouTubeNotConnectedException
+                    or TranscriptNotAvailableException or YouTubeIntegrationException)
+                {
+                    logger.LogWarning(ex, "Batch AI analysis failed for video {VideoId}.", videoId);
+                }
+                finally
+                {
+                    progressTracker.MarkFinished(videoId);
+                }
+            });
+        }
+
+        return Redirect(QueryHelpers.AddQueryString("/", "success",
+            distinctIds.Count switch
+            {
+                0 => "No videos were selected.",
+                1 => "Queued 1 video for analysis in the background.",
+                _ => $"Queued {distinctIds.Count} videos for analysis in the background."
             }));
     }
 
@@ -373,6 +436,56 @@ public sealed class HomeController(
                 ["analysisId"] = analysisId.ToString(),
                 ["jobId"] = jobId.ToString(),
                 ["job"] = "thumbnail"
+            }));
+    }
+
+    /// <summary>
+    /// Re-uploads just the already-generated thumbnail to the live YouTube video, without touching
+    /// title/description or running <see cref="PublishAnalysis"/>'s conflict check - for pushing a
+    /// regenerated thumbnail again as many times as needed.
+    /// </summary>
+    [HttpPost("/videos/{videoId}/analysis/{analysisId:guid}/thumbnail/publish")]
+    [ValidateAntiForgeryToken]
+    public IActionResult PublishThumbnailOnly(string videoId, Guid analysisId)
+    {
+        var jobId = jobTracker.Create();
+
+        taskQueue.Enqueue(async (services, ct) =>
+        {
+            jobTracker.MarkRunning(jobId);
+            var scopedAnalysisService = services.GetRequiredService<IVideoAnalysisService>();
+
+            string redirectUrl;
+            try
+            {
+                await scopedAnalysisService.PublishThumbnailOnlyAsync(videoId, analysisId, ct);
+                redirectUrl = QueryHelpers.AddQueryString(
+                    $"/videos/{videoId}/analysis", new Dictionary<string, string?>
+                    {
+                        ["analysisId"] = analysisId.ToString(),
+                        ["success"] = "Thumbnail updated on YouTube."
+                    });
+            }
+            catch (Exception ex) when (ex is ThumbnailGenerationException or YouTubeIntegrationException)
+            {
+                logger.LogWarning(ex, "Publishing just the thumbnail failed for video {VideoId}.", videoId);
+                redirectUrl = QueryHelpers.AddQueryString(
+                    $"/videos/{videoId}/analysis", new Dictionary<string, string?>
+                    {
+                        ["analysisId"] = analysisId.ToString(),
+                        ["error"] = $"Updating the YouTube thumbnail failed: {ex.Message}"
+                    });
+            }
+
+            jobTracker.Complete(jobId, redirectUrl);
+        });
+
+        return Redirect(QueryHelpers.AddQueryString(
+            $"/videos/{videoId}/analysis", new Dictionary<string, string?>
+            {
+                ["analysisId"] = analysisId.ToString(),
+                ["jobId"] = jobId.ToString(),
+                ["job"] = "thumbnail-publish"
             }));
     }
 

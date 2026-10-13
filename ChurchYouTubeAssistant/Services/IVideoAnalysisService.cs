@@ -65,6 +65,18 @@ public interface IVideoAnalysisService
     /// <exception cref="Exceptions.ThumbnailGenerationException">The provider is not configured or the call failed.</exception>
     Task<VideoAnalysis> GenerateThumbnailImageAsync(
         string videoId, Guid analysisId, string imagePrompt, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Re-uploads the already-generated thumbnail image to the live YouTube video via
+    /// thumbnails.set, without touching title/description and without the conflict check
+    /// <see cref="PublishAsync"/> does. Meant for pushing a regenerated thumbnail again after a
+    /// first publish, as many times as needed, without re-running the full publish flow each time.
+    /// </summary>
+    /// <exception cref="Exceptions.VideoAnalysisNotFoundException">No such analysis exists for this video.</exception>
+    /// <exception cref="Exceptions.ThumbnailGenerationException">No thumbnail has been generated yet for this analysis.</exception>
+    /// <exception cref="Exceptions.YouTubeIntegrationException">The thumbnail upload itself failed.</exception>
+    Task<VideoAnalysis> PublishThumbnailOnlyAsync(
+        string videoId, Guid analysisId, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Coarse per-video status shown on the admin dashboard.</summary>
@@ -72,6 +84,14 @@ public enum VideoDashboardStatus
 {
     /// <summary>No analysis has ever been run for this video.</summary>
     NotAnalyzed,
+
+    /// <summary>
+    /// An analysis job is currently queued or running for this video. Computed from
+    /// <see cref="IVideoAnalysisProgressTracker"/>, not from stored data - it overrides whatever
+    /// the video's underlying status would otherwise be, since the dashboard should never show a
+    /// stale pre-job status while a job is actually in flight.
+    /// </summary>
+    Analyzing,
 
     /// <summary>At least one analysis exists, but its result has not been published to YouTube.</summary>
     Analyzed,

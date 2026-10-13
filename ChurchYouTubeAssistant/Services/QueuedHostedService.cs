@@ -1,17 +1,29 @@
+using ChurchYouTubeAssistant.Configuration;
+using Microsoft.Extensions.Options;
+
 namespace ChurchYouTubeAssistant.Services;
 
 /// <summary>
-/// Runs work items from <see cref="IBackgroundTaskQueue"/> one at a time for the process's
-/// lifetime. One at a time is intentional: this is a single admin's tool, not a worker pool, and
-/// running analyses sequentially avoids several concurrent OpenAI calls competing for the same
-/// rate limits.
+/// Runs work items from <see cref="IBackgroundTaskQueue"/> using a small pool of concurrent
+/// workers (<see cref="BackgroundJobOptions.MaxConcurrency"/>, default 3) for the process's
+/// lifetime. Concurrency is deliberately bounded rather than unlimited: this is a single admin's
+/// tool, and running everything in parallel would let a bulk "Analyze selected" batch fire off
+/// dozens of simultaneous OpenAI calls and blow through rate limits.
 /// </summary>
 public sealed class QueuedHostedService(
     IBackgroundTaskQueue taskQueue,
     IServiceScopeFactory scopeFactory,
+    IOptions<BackgroundJobOptions> options,
     ILogger<QueuedHostedService> logger) : BackgroundService
 {
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        var workerCount = Math.Max(1, options.Value.MaxConcurrency);
+        var workers = Enumerable.Range(0, workerCount).Select(_ => RunWorkerAsync(stoppingToken));
+        return Task.WhenAll(workers);
+    }
+
+    private async Task RunWorkerAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {

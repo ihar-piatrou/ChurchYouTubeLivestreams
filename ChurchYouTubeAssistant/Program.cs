@@ -62,11 +62,20 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddMemoryCache();
 
 // Background jobs for "Analyze" / "Generate Thumbnail": the HTTP request enqueues work and
-// returns immediately with a job id; QueuedHostedService runs it; the Analysis page polls
-// IBackgroundJobTracker for completion instead of the request itself blocking for the AI call.
+// returns immediately with a job id; QueuedHostedService runs it (with up to MaxConcurrency jobs
+// at once); the Analysis page polls IBackgroundJobTracker for completion instead of the request
+// itself blocking for the AI call.
+builder.Services
+    .AddOptions<BackgroundJobOptions>()
+    .Bind(builder.Configuration.GetSection(BackgroundJobOptions.SectionName));
+
 builder.Services.AddSingleton<IBackgroundTaskQueue, BackgroundTaskQueue>();
 builder.Services.AddHostedService<QueuedHostedService>();
 builder.Services.AddSingleton<IBackgroundJobTracker, MemoryCacheBackgroundJobTracker>();
+
+// Lets the dashboard show "Analyzing..." for a video while its analysis job is queued/running,
+// instead of its stale pre-job status - see IVideoAnalysisProgressTracker.
+builder.Services.AddSingleton<IVideoAnalysisProgressTracker, VideoAnalysisProgressTracker>();
 
 // Pending OAuth state values. In-process today; swap for a distributed cache when scaled out.
 builder.Services.AddSingleton<IOAuthStateStore, MemoryCacheOAuthStateStore>();

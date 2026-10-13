@@ -177,6 +177,33 @@ public sealed class VideoAnalysisService(
         return analysis;
     }
 
+    public async Task<VideoAnalysis> PublishThumbnailOnlyAsync(
+        string videoId, Guid analysisId, CancellationToken cancellationToken = default)
+    {
+        var analysis = await db.VideoAnalyses.FirstOrDefaultAsync(
+                a => a.VideoId == videoId && a.Id == analysisId, cancellationToken)
+            ?? throw new VideoAnalysisNotFoundException($"Analysis {analysisId} for video {videoId} was not found.");
+
+        if (analysis.ThumbnailImageData is not { Length: > 0 } imageData)
+        {
+            throw new ThumbnailGenerationException(
+                ThumbnailGenerationError.TransientFailure,
+                "No thumbnail image has been generated yet for this analysis.");
+        }
+
+        await youTubeWriteService.SetThumbnailAsync(
+            videoId, imageData, analysis.ThumbnailImageContentType ?? "image/png", cancellationToken);
+
+        analysis.ThumbnailPublished = true;
+        analysis.ThumbnailPublishedAtUtc = timeProvider.GetUtcNow();
+        await db.SaveChangesAsync(cancellationToken);
+
+        logger.LogInformation(
+            "Published just the thumbnail for analysis {AnalysisId} (video {VideoId}).", analysisId, videoId);
+
+        return analysis;
+    }
+
     public async Task<PublishResult> PublishAsync(
         string videoId, Guid analysisId, PublishRequest request, CancellationToken cancellationToken = default)
     {

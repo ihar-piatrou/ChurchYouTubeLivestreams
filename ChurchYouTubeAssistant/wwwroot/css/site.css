@@ -12,6 +12,11 @@
     --warn-text: #8a6500;
     --err-bg: #fdecea;
     --err-text: #c0392b;
+    --info-bg: #e8f0fe;
+    --info-text: #1a56c4;
+    --btn-bg: #1a73e8;
+    --btn-bg-hover: #1558b0;
+    --btn-text: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -28,6 +33,13 @@
         --warn-text: #fcc934;
         --err-bg: #3c1513;
         --err-text: #f28b82;
+        --info-bg: #1b2a4a;
+        --info-text: #8ab4f8;
+        /* A more saturated blue than --brand (which is pale, for link text on a dark page) -
+           white button text on it stays readable, unlike it would on --brand itself. */
+        --btn-bg: #4c8dff;
+        --btn-bg-hover: #6ea1ff;
+        --btn-text: #ffffff;
     }
 }
 
@@ -82,20 +94,60 @@ h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
 .alert ul { margin: 0.35rem 0 0; padding-left: 1.2rem; }
 
 .btn {
-    display: inline-block;
-    border: 1px solid var(--brand);
-    background: var(--brand);
-    color: #fff;
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: 1px solid var(--btn-bg);
+    background: var(--btn-bg);
+    color: var(--btn-text);
+    padding: 0.55rem 1.1rem;
+    border-radius: 8px;
     text-decoration: none;
     font-size: 0.95rem;
+    font-weight: 600;
     cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
 }
+.btn:hover { background: var(--btn-bg-hover); border-color: var(--btn-bg-hover); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15); }
+.btn:active { transform: translateY(1px); box-shadow: none; }
+.btn:focus-visible { outline: 2px solid var(--btn-bg); outline-offset: 2px; }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; box-shadow: none; transform: none; }
+
 .btn-secondary {
-    background: transparent;
+    background: var(--card-bg);
     color: var(--text);
     border-color: var(--border);
+    box-shadow: none;
+}
+.btn-secondary:hover { background: var(--bg); border-color: var(--muted); box-shadow: none; }
+.btn-secondary:focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
+
+select {
+    display: inline-block;
+    appearance: none;
+    -webkit-appearance: none;
+    background-color: var(--card-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 2.2rem 0.5rem 0.75rem;
+    font-size: 0.9rem;
+    font-family: inherit;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4' stroke='%235b6370' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+    background-size: 12px;
+    transition: border-color 0.15s ease;
+}
+select:hover { border-color: var(--muted); }
+select:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; border-color: var(--brand); }
+
+@media (prefers-color-scheme: dark) {
+    select {
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4' stroke='%239aa3ad' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    }
 }
 
 .status-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
@@ -120,6 +172,27 @@ h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
     0% { margin-left: -40%; }
     100% { margin-left: 100%; }
 }
+.tabs {
+    display: flex;
+    gap: 0.25rem;
+    border-bottom: 1px solid var(--border);
+    margin: 1.5rem 0 1.25rem;
+    overflow-x: auto;
+}
+.tab-btn {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 0.6rem 1rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--muted);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--text); border-bottom-color: var(--brand); }
+
 .badge {
     display: inline-block;
     padding: 0.15rem 0.6rem;
@@ -130,6 +203,38 @@ h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
 .badge-ok { background: var(--ok-bg); color: var(--ok-text); }
 .badge-off { background: var(--err-bg); color: var(--err-text); }
 .badge-warn { background: var(--warn-bg); color: var(--warn-text); }
+.badge-info { background: var(--info-bg); color: var(--info-text); }
+
+.filter-bar {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.filter-bar input[type="text"] {
+    flex: 1 1 240px;
+    background-color: var(--card-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.9rem;
+    font-family: inherit;
+}
+.filter-bar input[type="text"]:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 1px;
+    border-color: var(--brand);
+}
+
+.toolbar {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
 
 .channel { display: flex; gap: 1rem; align-items: flex-start; }
 .channel img { width: 88px; height: 88px; border-radius: 50%; flex-shrink: 0; }

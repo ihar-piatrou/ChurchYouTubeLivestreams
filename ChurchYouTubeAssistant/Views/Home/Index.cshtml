@@ -86,61 +86,82 @@
 {
     <h2>Latest uploads</h2>
     <div class="card">
-        <table>
-            <thead>
-                <tr>
-                    <th></th>
-                    <th>Title</th>
-                    <th>Published</th>
-                    <th>Duration</th>
-                    <th>Status</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var video in Model.Videos)
-                {
-                    var status = Model.VideoStatuses.GetValueOrDefault(video.VideoId, VideoDashboardStatus.NotAnalyzed);
+        <div class="filter-bar">
+            <input type="text" id="videoSearch" placeholder="Search by title..." />
+            <select id="statusFilter">
+                <option value="">All statuses</option>
+                <option value="NotAnalyzed">Not analyzed</option>
+                <option value="Analyzing">Analyzing</option>
+                <option value="Analyzed">Analyzed</option>
+                <option value="Published">Published to YouTube</option>
+            </select>
+        </div>
+        <form method="post" asp-action="AnalyzeBatch" asp-controller="Home">
+            <div class="toolbar">
+                <label><input type="checkbox" id="selectAllVideos" /> Select all</label>
+                <button type="submit" class="btn btn-secondary" id="analyzeSelectedBtn" disabled>Analyze selected</button>
+            </div>
+            <table>
+                <thead>
                     <tr>
-                        <td>
-                            @if (video.ThumbnailUrl is not null)
-                            {
-                                <img class="thumb" src="@video.ThumbnailUrl" alt="" />
-                            }
-                        </td>
-                        <td>
-                            <div class="video-title">@video.Title</div>
-                            <a class="muted" href="@video.WatchUrl" target="_blank" rel="noopener">watch on YouTube</a>
-                            @if (video.Details?.IsLivestream == true)
-                            {
-                                <span class="muted"> &middot; livestream</span>
-                            }
-                        </td>
-                        <td class="muted">@(video.PublishedAt?.ToLocalTime().ToString("yyyy-MM-dd") ?? "-")</td>
-                        <td class="muted">@(video.Details?.Duration?.ToString(@"hh\:mm\:ss") ?? "-")</td>
-                        <td>
-                            @switch (status)
-                            {
-                                case VideoDashboardStatus.Published:
-                                    <span class="badge badge-ok">Published to YouTube</span>
-                                    break;
-                                case VideoDashboardStatus.Analyzed:
-                                    <span class="badge badge-warn">Analyzed</span>
-                                    break;
-                                default:
-                                    <span class="muted">Not analyzed</span>
-                                    break;
-                            }
-                        </td>
-                        <td>
-                            <a href="/transcript/@video.VideoId">Transcript</a>
-                            &middot;
-                            <a href="/videos/@video.VideoId/analysis">Analyze</a>
-                        </td>
+                        <th></th>
+                        <th></th>
+                        <th>Title</th>
+                        <th>Published</th>
+                        <th>Duration</th>
+                        <th>Status</th>
+                        <th></th>
                     </tr>
-                }
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    @foreach (var video in Model.Videos)
+                    {
+                        var status = Model.VideoStatuses.GetValueOrDefault(video.VideoId, VideoDashboardStatus.NotAnalyzed);
+                        <tr data-title="@video.Title.ToLowerInvariant()" data-status="@status">
+                            <td><input type="checkbox" class="video-checkbox" name="videoIds" value="@video.VideoId" /></td>
+                            <td>
+                                @if (video.ThumbnailUrl is not null)
+                                {
+                                    <img class="thumb" src="@video.ThumbnailUrl" alt="" />
+                                }
+                            </td>
+                            <td>
+                                <div class="video-title">@video.Title</div>
+                                <a class="muted" href="@video.WatchUrl" target="_blank" rel="noopener">watch on YouTube</a>
+                                @if (video.Details?.IsLivestream == true)
+                                {
+                                    <span class="muted"> &middot; livestream</span>
+                                }
+                            </td>
+                            <td class="muted">@(video.PublishedAt?.ToLocalTime().ToString("yyyy-MM-dd") ?? "-")</td>
+                            <td class="muted">@(video.Details?.Duration?.ToString(@"hh\:mm\:ss") ?? "-")</td>
+                            <td>
+                                @switch (status)
+                                {
+                                    case VideoDashboardStatus.Published:
+                                        <span class="badge badge-ok">Published to YouTube</span>
+                                        break;
+                                    case VideoDashboardStatus.Analyzed:
+                                        <span class="badge badge-warn">Analyzed</span>
+                                        break;
+                                    case VideoDashboardStatus.Analyzing:
+                                        <span class="badge badge-info">Analyzing...</span>
+                                        break;
+                                    default:
+                                        <span class="muted">Not analyzed</span>
+                                        break;
+                                }
+                            </td>
+                            <td>
+                                <a href="/transcript/@video.VideoId">Transcript</a>
+                                &middot;
+                                <a href="/videos/@video.VideoId/analysis">Analyze</a>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </form>
         @if (!string.IsNullOrEmpty(Model.PrevPageToken) || !string.IsNullOrEmpty(Model.NextPageToken))
         {
             <div class="status-row" style="margin-top:0.75rem;">
@@ -160,3 +181,61 @@ else if (Model.Connected && Model.LoadError is null)
 {
     <p class="muted">No uploads found on this channel yet.</p>
 }
+
+<script>
+    (function () {
+        var rows = document.querySelectorAll('tbody tr[data-title]');
+        var searchBox = document.getElementById('videoSearch');
+        var statusFilter = document.getElementById('statusFilter');
+        var selectAll = document.getElementById('selectAllVideos');
+        var analyzeBtn = document.getElementById('analyzeSelectedBtn');
+
+        if (rows.length === 0 || !searchBox) {
+            return;
+        }
+
+        function applyFilter() {
+            var term = (searchBox.value || '').toLowerCase();
+            var status = statusFilter.value;
+            rows.forEach(function (row) {
+                var matchesTitle = row.getAttribute('data-title').indexOf(term) !== -1;
+                var matchesStatus = !status || row.getAttribute('data-status') === status;
+                row.hidden = !(matchesTitle && matchesStatus);
+            });
+            updateSelectAllState();
+        }
+
+        function visibleCheckboxes() {
+            return Array.prototype.filter.call(
+                document.querySelectorAll('.video-checkbox'),
+                function (cb) { return !cb.closest('tr').hidden; });
+        }
+
+        function updateAnalyzeButtonState() {
+            var anyChecked = Array.prototype.some.call(
+                document.querySelectorAll('.video-checkbox'), function (cb) { return cb.checked; });
+            analyzeBtn.disabled = !anyChecked;
+        }
+
+        function updateSelectAllState() {
+            var visible = visibleCheckboxes();
+            var allChecked = visible.length > 0 && visible.every(function (cb) { return cb.checked; });
+            selectAll.checked = allChecked;
+        }
+
+        searchBox.addEventListener('input', applyFilter);
+        statusFilter.addEventListener('change', applyFilter);
+
+        selectAll.addEventListener('change', function () {
+            visibleCheckboxes().forEach(function (cb) { cb.checked = selectAll.checked; });
+            updateAnalyzeButtonState();
+        });
+
+        document.querySelectorAll('.video-checkbox').forEach(function (cb) {
+            cb.addEventListener('change', function () {
+                updateAnalyzeButtonState();
+                updateSelectAllState();
+            });
+        });
+    })();
+</script>

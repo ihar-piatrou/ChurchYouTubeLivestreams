@@ -21,7 +21,12 @@
 {
     <div class="card">
         <p>
-            @(Model.PendingJobKind == "thumbnail" ? "Generating thumbnail image..." : "Running AI analysis...")
+            @(Model.PendingJobKind switch
+            {
+                "thumbnail" => "Generating thumbnail image...",
+                "thumbnail-publish" => "Updating thumbnail on YouTube...",
+                _ => "Running AI analysis..."
+            })
             This can take up to a minute or two - this page updates automatically when it's done.
         </p>
         <div class="progress-bar"><div class="progress-bar-fill"></div></div>
@@ -110,6 +115,15 @@
     </div>
 }
 
+<div class="tabs" role="tablist">
+    <button type="button" class="tab-btn active" data-tab="title" role="tab">Title &amp; Description</button>
+    <button type="button" class="tab-btn" data-tab="topics" role="tab">Topics &amp; Chapters</button>
+    <button type="button" class="tab-btn" data-tab="thumbnail" role="tab">Thumbnail &amp; Image Prompt</button>
+    <button type="button" class="tab-btn" data-tab="shorts" role="tab">Shorts</button>
+</div>
+
+<div class="tab-panel" data-tab-panel="title">
+
 <h2>Title &amp; Description</h2>
 <div class="card">
     <h3 class="muted">Original</h3>
@@ -166,6 +180,10 @@
         </div>
     </div>
 </form>
+
+</div>
+
+<div class="tab-panel" data-tab-panel="topics" hidden>
 
 <h2>Sermon Analysis</h2>
 <div class="card">
@@ -230,6 +248,10 @@ else
     </div>
 }
 
+</div>
+
+<div class="tab-panel" data-tab-panel="thumbnail" hidden>
+
 <h2>Thumbnail Concept</h2>
 <div class="card">
     <p><strong>@a.Thumbnail?.Headline</strong></p>
@@ -253,7 +275,7 @@ else
             }
             else
             {
-                <span>&middot; not yet published - will upload with the next "Update YouTube Video" click</span>
+                <span>&middot; not yet published - click "Update Thumbnail on YouTube" below, or publish it together with the title/description via "Update YouTube Video"</span>
             }
         </p>
     }
@@ -272,11 +294,26 @@ else
                     class="btn">
                 @(a.ThumbnailImageGeneratedAtUtc is null ? "Generate Thumbnail Image" : "Regenerate Thumbnail Image")
             </button>
+            @if (a.ThumbnailImageGeneratedAtUtc is not null)
+            {
+                <button type="submit" formaction="/videos/@Model.VideoId/analysis/@a.Id/thumbnail/publish"
+                        onclick="return confirm('Upload the current thumbnail image to the live YouTube video now? This does not touch the title or description.');"
+                        class="btn">
+                    Update Thumbnail on YouTube
+                </button>
+            }
             <button type="button" class="btn btn-secondary" onclick="copyText('thumbnail-prompt', this)">Copy Thumbnail Prompt</button>
         </div>
-        <span class="muted">Save Prompt stores your edits only (no @Model.ThumbnailProviderLabel call). Generate also saves the prompt, then calls @Model.ThumbnailProviderLabel.</span>
+        <span class="muted">
+            Save Prompt stores your edits only (no @Model.ThumbnailProviderLabel call). Generate also saves the prompt, then calls @Model.ThumbnailProviderLabel.
+            Update Thumbnail on YouTube uploads the current image by itself - safe to click again after each regeneration.
+        </span>
     </form>
 </div>
+
+</div>
+
+<div class="tab-panel" data-tab-panel="shorts" hidden>
 
 <h2>YouTube Shorts Candidates</h2>
 @if (a.Shorts.Count == 0)
@@ -322,6 +359,8 @@ else
         </div>
     }
 }
+
+</div>
 
 <script>
 function copyText(elementId, button) {
@@ -370,4 +409,33 @@ document.querySelectorAll('.chapter-toggle').forEach(function (cb) {
 document.getElementById('publish-form')?.addEventListener('submit', function () {
     document.getElementById('acknowledgeConflict').value = '@(Model.ConflictDetected ? "true" : "false")';
 });
+
+// Tabs. Every panel's markup stays in the DOM (just hidden) so none of the scripts above need to
+// care which tab is active. The active tab is remembered in localStorage, purely a per-browser
+// convenience, so it survives the full-page redirect every form on this page does on submit -
+// otherwise saving a thumbnail prompt would always bounce you back to the Title tab.
+(function () {
+    var tabButtons = document.querySelectorAll('.tab-btn');
+    var tabPanels = document.querySelectorAll('.tab-panel');
+    var storageKey = 'analysisActiveTab';
+
+    function activateTab(name) {
+        tabButtons.forEach(function (b) { b.classList.toggle('active', b.dataset.tab === name); });
+        tabPanels.forEach(function (p) { p.hidden = p.dataset.tabPanel !== name; });
+    }
+
+    tabButtons.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            activateTab(btn.dataset.tab);
+            try { localStorage.setItem(storageKey, btn.dataset.tab); } catch (e) { /* private mode, etc. */ }
+        });
+    });
+
+    try {
+        var savedTab = localStorage.getItem(storageKey);
+        if (savedTab && document.querySelector('[data-tab-panel="' + savedTab + '"]')) {
+            activateTab(savedTab);
+        }
+    } catch (e) { /* private mode, etc. - default tab stays active */ }
+})();
 </script>
