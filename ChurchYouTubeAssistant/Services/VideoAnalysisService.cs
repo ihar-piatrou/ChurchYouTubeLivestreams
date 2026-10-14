@@ -215,9 +215,19 @@ public sealed class VideoAnalysisService(
         // against our own cache, which could itself be stale.
         var live = await youTubeReadService.GetVideoAsync(videoId, cancellationToken);
 
+        // Once this analysis has been published at least once, the correct baseline for "did
+        // something else change this on YouTube" is what we ourselves last published, not the
+        // pre-analysis OriginalTitle/OriginalDescription - otherwise a routine re-publish of the
+        // same analysis (e.g. fixing a typo and clicking Update again) would always look like an
+        // external conflict, since the live value now equals our own last publish, not the original.
+        var expectedLiveTitle = analysis.IsPublished ? analysis.PublishedTitle ?? analysis.OriginalTitle : analysis.OriginalTitle;
+        var expectedLiveDescription = analysis.IsPublished
+            ? analysis.PublishedDescription ?? analysis.OriginalDescription
+            : analysis.OriginalDescription;
+
         var conflict =
-            !string.Equals(live.Title, analysis.OriginalTitle, StringComparison.Ordinal)
-            || !string.Equals(live.Description ?? string.Empty, analysis.OriginalDescription, StringComparison.Ordinal);
+            !string.Equals(live.Title, expectedLiveTitle, StringComparison.Ordinal)
+            || !string.Equals(live.Description ?? string.Empty, expectedLiveDescription, StringComparison.Ordinal);
 
         if (conflict && !request.AcknowledgeConflict)
         {
@@ -249,7 +259,7 @@ public sealed class VideoAnalysisService(
         var thumbnailPublished = false;
         string? thumbnailError = null;
 
-        if (analysis.ThumbnailImageData is { Length: > 0 } imageData)
+        if (request.IncludeThumbnail && analysis.ThumbnailImageData is { Length: > 0 } imageData)
         {
             thumbnailAttempted = true;
             try

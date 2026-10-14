@@ -1,0 +1,111 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "language": { "type": "string", "description": "BCP-47-ish language code or name of the transcript, e.g. 'ru'." },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "optimized": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "title": { "type": "string" },
+            "description": { "type": "string" }
+          },
+          "required": ["title", "description"]
+        },
+        "alternativeTitles": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "reasoning": { "type": "string" }
+      },
+      "required": ["optimized", "alternativeTitles", "reasoning"]
+    },
+    "sermonAnalysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mainMessage": { "type": "string" },
+        "mainQuestion": { "type": "string" },
+        "keyThemes": { "type": "array", "items": { "type": "string" } },
+        "keywords": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["mainMessage", "mainQuestion", "keyThemes", "keywords"]
+    },
+    "bibleReferences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "reference": { "type": "string" },
+          "isPrimary": { "type": "boolean" },
+          "referenceType": { "type": "string", "enum": ["explicit", "inferred"] },
+          "context": { "type": "string" },
+          "startSeconds": { "type": ["integer", "null"] }
+        },
+        "required": ["reference", "isPrimary", "referenceType", "context", "startSeconds"]
+      }
+    },
+    "chapters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "startSeconds": { "type": "integer" },
+          "startTime": { "type": "string" },
+          "title": { "type": "string" },
+          "summary": { "type": "string" }
+        },
+        "required": ["startSeconds", "startTime", "title", "summary"]
+      }
+    },
+    "thumbnail": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "headline": { "type": "string" },
+        "alternativeHeadlines": { "type": "array", "items": { "type": "string" } },
+        "visualConcept": { "type": "string" },
+        "imagePrompt": { "type": "string" },
+        "composition": { "type": "string" },
+        "reasoning": { "type": "string" }
+      },
+      "required": ["headline", "alternativeHeadlines", "visualConcept", "imagePrompt", "composition", "reasoning"]
+    },
+    "shorts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "title": { "type": "string" },
+          "startSeconds": { "type": "integer" },
+          "endSeconds": { "type": "integer" },
+          "startTime": { "type": "string" },
+          "endTime": { "type": "string" },
+          "durationSeconds": { "type": "integer" },
+          "hook": { "type": "string" },
+          "mainMessage": { "type": "string" },
+          "conclusion": { "type": "string" },
+          "reason": { "type": "string" },
+          "score": { "type": "integer" },
+          "category": { "type": "string" },
+          "transcriptExcerpt": { "type": "string" },
+          "timestampConfidence": { "type": "string", "enum": ["high", "medium", "low"] },
+          "requiresManualReview": { "type": "boolean" }
+        },
+        "required": [
+          "title", "startSeconds", "endSeconds", "startTime", "endTime", "durationSeconds",
+          "hook", "mainMessage", "conclusion", "reason", "score", "category",
+          "transcriptExcerpt", "timestampConfidence", "requiresManualReview"
+        ]
+      }
+    }
+  },
+  "required": ["language", "metadata", "sermonAnalysis", "bibleReferences", "chapters", "thumbnail", "shorts"]
+}

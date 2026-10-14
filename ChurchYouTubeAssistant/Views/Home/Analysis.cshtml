@@ -4,9 +4,17 @@
     var a = Model.Selected;
 }
 
-<p><a href="/">&larr; Back to dashboard</a></p>
+@{
+    var backToDashboardHref = Model.PageToken is { Length: > 0 } backPt
+        ? $"/?pageToken={Uri.EscapeDataString(backPt)}"
+        : "/";
+    var transcriptHref = Model.PageToken is { Length: > 0 } transPt
+        ? $"/transcript/{Model.VideoId}?pageToken={Uri.EscapeDataString(transPt)}"
+        : $"/transcript/{Model.VideoId}";
+}
+<p><a href="@backToDashboardHref">&larr; Back to dashboard</a></p>
 <h1>AI Analysis</h1>
-<p class="muted">Video ID: @Model.VideoId &middot; <a href="/transcript/@Model.VideoId">view transcript</a></p>
+<p class="muted">Video ID: @Model.VideoId &middot; <a href="@transcriptHref">view transcript</a></p>
 
 @if (Model.FlashSuccess is not null)
 {
@@ -25,7 +33,7 @@
             {
                 "thumbnail" => "Generating thumbnail image...",
                 "thumbnail-publish" => "Updating thumbnail on YouTube...",
-                _ => "Running AI analysis..."
+                _ => "Running AI analysis and generating thumbnail..."
             })
             This can take up to a minute or two - this page updates automatically when it's done.
         </p>
@@ -56,6 +64,7 @@
         @if (Model.History.Count > 0)
         {
             <form method="get" action="/videos/@Model.VideoId/analysis" class="inline">
+                <input type="hidden" name="pageToken" value="@Model.PageToken" />
                 <label class="muted" for="analysisId">History:</label>
                 <select name="analysisId" id="analysisId" onchange="this.form.submit()">
                     @foreach (var h in Model.History)
@@ -68,9 +77,17 @@
                 </select>
             </form>
         }
+        @if (a is not null)
+        {
+            <button type="submit" form="publish-form" name="includeThumbnail" value="true" class="btn"
+                    onclick="return confirm('Publish this title, description@(a.ThumbnailImageGeneratedAtUtc is not null ? " and thumbnail" : "") to the real YouTube video now?');">
+                Update Title, Description@(a.ThumbnailImageGeneratedAtUtc is not null ? " & Thumbnail" : "")
+            </button>
+        }
         <form method="post" action="/videos/@Model.VideoId/analysis/analyze" style="margin-left:auto;"
               onsubmit="return confirm('Run a new AI analysis? This calls OpenAI and may take up to a minute.');">
             @Html.AntiForgeryToken()
+            <input type="hidden" name="pageToken" value="@Model.PageToken" />
             <button type="submit" class="btn">@(a is null ? "Analyze Video with AI" : "Regenerate Analysis")</button>
         </form>
     </div>
@@ -134,6 +151,7 @@
 <form method="post" action="/videos/@Model.VideoId/analysis/@a.Id/publish" id="publish-form">
     @Html.AntiForgeryToken()
     <input type="hidden" name="acknowledgeConflict" id="acknowledgeConflict" value="@(Model.ConflictDetected ? "true" : "false")" />
+    <input type="hidden" name="pageToken" value="@Model.PageToken" />
 
     <div class="card">
         <h3 class="muted">AI Optimized (editable before publishing or saving)</h3>
@@ -168,14 +186,15 @@
             <button type="submit" formaction="/videos/@Model.VideoId/analysis/@a.Id/save" class="btn btn-secondary">
                 Save Draft
             </button>
-            <button type="submit"
-                    onclick="return confirm('Publish this title, description@(a.ThumbnailImageGeneratedAtUtc is not null ? " and thumbnail" : "") to the real YouTube video now?');"
+            <button type="submit" name="includeThumbnail" value="false"
+                    onclick="return confirm('Publish this title and description to the real YouTube video now? The thumbnail will not be touched.');"
                     class="btn">
-                Update YouTube Video
+                Update Title &amp; Description Only
             </button>
             <span class="muted">
-                Save Draft stores your edits only. Update YouTube Video overwrites the live title/description
-                @(a.ThumbnailImageGeneratedAtUtc is not null ? "and uploads the generated thumbnail" : "").
+                Save Draft stores your edits only. Update Title &amp; Description Only overwrites just the live
+                title/description, leaving the thumbnail as-is. To update the thumbnail too, use the button at the
+                top of the page.
             </span>
         </div>
     </div>
@@ -275,13 +294,14 @@ else
             }
             else
             {
-                <span>&middot; not yet published - click "Update Thumbnail on YouTube" below, or publish it together with the title/description via "Update YouTube Video"</span>
+                <span>&middot; not yet published - click "Update Thumbnail on YouTube" below, or publish it together with the title/description via the "Update Title, Description &amp; Thumbnail on YouTube" button at the top of the page</span>
             }
         </p>
     }
 
     <form method="post" action="/videos/@Model.VideoId/analysis/@a.Id/thumbnail">
         @Html.AntiForgeryToken()
+        <input type="hidden" name="pageToken" value="@Model.PageToken" />
         <label for="thumbnail-prompt" class="muted">Image-generation prompt (editable):</label>
         <textarea id="thumbnail-prompt" name="imagePrompt" rows="5"
                   style="width:100%;padding:0.5rem;font-family:inherit;">@(a.EditedThumbnailPrompt ?? a.Thumbnail?.ImagePrompt)</textarea>

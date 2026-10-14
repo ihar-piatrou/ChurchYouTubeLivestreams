@@ -12,6 +12,13 @@ public sealed record PublishRequest
     /// conflict; it never publishes.
     /// </summary>
     public bool AcknowledgeConflict { get; init; }
+
+    /// <summary>
+    /// Whether to also upload the generated thumbnail (if one exists) along with title/description.
+    /// Defaults to true (the original "publish everything" behavior); set false for a
+    /// title/description-only update that leaves the live thumbnail untouched.
+    /// </summary>
+    public bool IncludeThumbnail { get; init; } = true;
 }
 
 /// <summary>The outcome of a publish attempt.</summary>

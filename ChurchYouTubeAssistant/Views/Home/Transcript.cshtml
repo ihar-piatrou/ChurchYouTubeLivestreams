@@ -3,7 +3,7 @@
     ViewData["Title"] = "Transcript";
 }
 
-<p><a href="/">&larr; Back to dashboard</a></p>
+<p><a href="/@(Model.PageToken is { Length: > 0 } pt ? $"?pageToken={Uri.EscapeDataString(pt)}" : "")">&larr; Back to dashboard</a></p>
 
 <h1>Transcript</h1>
 <p class="muted">Video ID: @Model.VideoId</p>

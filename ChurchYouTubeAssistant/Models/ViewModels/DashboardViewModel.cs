@@ -25,6 +25,11 @@ public sealed class DashboardViewModel
     public IReadOnlyDictionary<string, Services.VideoDashboardStatus> VideoStatuses { get; init; } =
         new Dictionary<string, Services.VideoDashboardStatus>();
 
+    /// <summary>The token this page was loaded with, if any; carried along to per-video links and
+    /// batch actions so leaving this page and coming back (e.g. "Back to dashboard") lands on the
+    /// same page instead of resetting to the first one.</summary>
+    public string? CurrentPageToken { get; init; }
+
     /// <summary>Pass back as ?pageToken= to fetch the next page of videos; null on the last page.</summary>
     public string? NextPageToken { get; init; }
 

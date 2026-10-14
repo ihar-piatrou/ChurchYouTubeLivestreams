@@ -5,6 +5,11 @@ public sealed record VideoAnalysisPageViewModel
 {
     public required string VideoId { get; init; }
 
+    /// <summary>The dashboard page token this video was opened from, if any; carried through every
+    /// action on this page and used to build the "Back to dashboard" link so it returns to the same
+    /// page instead of resetting to the first one.</summary>
+    public string? PageToken { get; init; }
+
     public IReadOnlyList<VideoAnalysis> History { get; init; } = [];
 
     /// <summary>The analysis currently being displayed (newest by default, or a chosen past one).</summary>

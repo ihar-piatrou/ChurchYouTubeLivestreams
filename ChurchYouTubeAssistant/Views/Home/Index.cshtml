@@ -97,9 +97,15 @@
             </select>
         </div>
         <form method="post" asp-action="AnalyzeBatch" asp-controller="Home">
+            <input type="hidden" name="pageToken" value="@Model.CurrentPageToken" />
             <div class="toolbar">
                 <label><input type="checkbox" id="selectAllVideos" /> Select all</label>
                 <button type="submit" class="btn btn-secondary" id="analyzeSelectedBtn" disabled>Analyze selected</button>
+                <button type="submit" class="btn btn-secondary" id="publishSelectedBtn" disabled
+                        formaction="/videos/publish-batch"
+                        onclick="return confirm('Publish title, description, and thumbnail for the selected videos to YouTube now?');">
+                    Publish selected
+                </button>
             </div>
             <table>
                 <thead>
@@ -153,9 +159,9 @@
                                 }
                             </td>
                             <td>
-                                <a href="/transcript/@video.VideoId">Transcript</a>
+                                <a href="/transcript/@video.VideoId@(Model.CurrentPageToken is { Length: > 0 } cpt ? $"?pageToken={Uri.EscapeDataString(cpt)}" : "")">Transcript</a>
                                 &middot;
-                                <a href="/videos/@video.VideoId/analysis">Analyze</a>
+                                <a href="/videos/@video.VideoId/analysis@(Model.CurrentPageToken is { Length: > 0 } cpt2 ? $"?pageToken={Uri.EscapeDataString(cpt2)}" : "")">Analyze</a>
                             </td>
                         </tr>
                     }
@@ -189,6 +195,7 @@ else if (Model.Connected && Model.LoadError is null)
         var statusFilter = document.getElementById('statusFilter');
         var selectAll = document.getElementById('selectAllVideos');
         var analyzeBtn = document.getElementById('analyzeSelectedBtn');
+        var publishBtn = document.getElementById('publishSelectedBtn');
 
         if (rows.length === 0 || !searchBox) {
             return;
@@ -215,6 +222,7 @@ else if (Model.Connected && Model.LoadError is null)
             var anyChecked = Array.prototype.some.call(
                 document.querySelectorAll('.video-checkbox'), function (cb) { return cb.checked; });
             analyzeBtn.disabled = !anyChecked;
+            publishBtn.disabled = !anyChecked;
         }
 
         function updateSelectAllState() {
