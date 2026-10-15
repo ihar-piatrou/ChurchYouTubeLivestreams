@@ -91,6 +91,10 @@ namespace ChurchYouTubeAssistant.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("PrimaryCategory")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
                     b.Property<int?>("PromptTokens")
                         .HasColumnType("int");
 
@@ -109,6 +113,10 @@ namespace ChurchYouTubeAssistant.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("RawOpenAiResponse")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("SecondaryCategories")
+                        .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Status")

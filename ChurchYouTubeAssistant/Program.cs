@@ -55,6 +55,19 @@ builder.Services
     .AddOptions<ThumbnailOptions>()
     .Bind(builder.Configuration.GetSection(ThumbnailOptions.SectionName));
 
+// Jev:ApiKey - same "no ValidateOnStart" reasoning as Ideogram above: Jev is not the default
+// categorization provider, so the app must keep starting with no Jev key configured.
+builder.Services
+    .AddOptions<JevOptions>()
+    .Bind(builder.Configuration.GetSection(JevOptions.SectionName));
+
+// Categorization:Provider picks which ICategorizationService implementation handles sermon
+// theology-category classification - OpenAI (default, already-configured key) or Jev (once
+// Jev:ApiKey is set).
+builder.Services
+    .AddOptions<CategorizationOptions>()
+    .Bind(builder.Configuration.GetSection(CategorizationOptions.SectionName));
+
 // ---------------------------------------------------------------------------------------------
 // Application services
 // ---------------------------------------------------------------------------------------------
@@ -104,6 +117,11 @@ builder.Services.AddScoped<IVideoCacheStore, EfVideoCacheStore>();
 // Prompt/schema loaded once from Prompts/VideoAnalysisV1 (see VideoAnalysisPromptProvider).
 builder.Services.AddSingleton<IVideoAnalysisPromptProvider, VideoAnalysisPromptProvider>();
 
+// Shared Polly retry pipeline for every direct OpenAI SDK call (chat, categorization, image
+// generation) - see OpenAiRetryPolicy for why this lives in one place instead of three.
+builder.Services.AddSingleton(sp =>
+    OpenAiRetryPolicy.Create(sp.GetRequiredService<ILoggerFactory>().CreateLogger("OpenAiRetryPolicy")));
+
 // ChatClient is bound to one model string; OpenAiOptions:Model is read once here. Changing the
 // configured model requires a restart, which is an acceptable trade-off for a single-process app.
 builder.Services.AddSingleton(sp =>
@@ -128,6 +146,7 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<IVideoAnalysisAiService, OpenAiVideoAnalysisService>();
 builder.Services.AddSingleton<VideoAnalysisValidator>();
 builder.Services.AddScoped<IVideoAnalysisService, VideoAnalysisService>();
+builder.Services.AddScoped<IAnalyticsService, AnalyticsService>();
 
 // Typed HttpClient for Ideogram (thumbnail image generation). The request timeout is enforced by
 // IdeogramThumbnailService's own CancellationTokenSource, not the HttpClient.Timeout default,
@@ -167,6 +186,23 @@ builder.Services.AddSingleton<IThumbnailImageService>(sp =>
     {
         ThumbnailProvider.OpenAi => sp.GetRequiredService<OpenAiThumbnailImageService>(),
         _ => sp.GetRequiredService<IdeogramThumbnailService>()
+    };
+});
+
+// Same provider-switch shape as IThumbnailImageService above. Jev has no .NET SDK, so it's called
+// via a typed HttpClient directly against https://api.typesafe.ai (see JevCategorizationService).
+builder.Services.AddSingleton<OpenAiCategorizationService>();
+builder.Services.AddHttpClient<JevCategorizationService>(client =>
+{
+    client.BaseAddress = new Uri("https://api.typesafe.ai/");
+});
+builder.Services.AddSingleton<ICategorizationService>(sp =>
+{
+    var provider = sp.GetRequiredService<IOptions<CategorizationOptions>>().Value.Provider;
+    return provider switch
+    {
+        CategorizationProvider.Jev => sp.GetRequiredService<JevCategorizationService>(),
+        _ => sp.GetRequiredService<OpenAiCategorizationService>()
     };
 });
 

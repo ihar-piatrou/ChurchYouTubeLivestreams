@@ -1,0 +1,191 @@
+@model AnalyticsViewModel
+@using ChurchYouTubeAssistant.Services
+@{
+    ViewData["Title"] = "Sermon Analytics";
+}
+
+<p><a href="/">&larr; Back to dashboard</a></p>
+<h1>Sermon Analytics</h1>
+
+<div class="card">
+    <form method="get" action="/analytics" class="toolbar">
+        <label class="muted" for="from">From</label>
+        <input type="date" id="from" name="from" value="@Model.From.ToString("yyyy-MM-dd")" />
+        <label class="muted" for="to">To</label>
+        <input type="date" id="to" name="to" value="@Model.To.ToString("yyyy-MM-dd")" />
+        <button type="submit" class="btn">Apply</button>
+        <a class="btn btn-secondary" href="/analytics?from=@DateOnly.MinValue.ToString("yyyy-MM-dd")&to=@Model.To.ToString("yyyy-MM-dd")">All time</a>
+    </form>
+</div>
+
+<div class="card">
+    <p>
+        <strong>@Model.SermonCount</strong> sermon@(Model.SermonCount == 1 ? "" : "s") analyzed between
+        <strong>@Model.From.ToString("M/d/yyyy")</strong> and <strong>@Model.To.ToString("M/d/yyyy")</strong>.
+        @if (Model.UnparsedReferenceCount > 0)
+        {
+            <span class="muted">
+                @Model.UnparsedReferenceCount reference@(Model.UnparsedReferenceCount == 1 ? "" : "s") could not be
+                auto-matched to a book - <a href="#unparsed-refs">see list below</a>.
+            </span>
+        }
+    </p>
+    @if (Model.UncategorizedCount > 0)
+    {
+        <form method="post" action="/videos/categorize-uncategorized" class="toolbar">
+            @Html.AntiForgeryToken()
+            <span class="muted">
+                @Model.UncategorizedCount sermon@(Model.UncategorizedCount == 1 ? "" : "s") in range have no theology category yet.
+            </span>
+            <button type="submit" class="btn">Categorize uncategorized</button>
+        </form>
+    }
+</div>
+
+@if (Model.SermonCount == 0)
+{
+    <p class="muted">No analyzed sermons in this date range.</p>
+    return;
+}
+
+<h2>Most-preached Bible books (primary passages)</h2>
+<div class="card">
+    @if (Model.TopBooksByPrimaryReferences.Count > 0)
+    {
+        <canvas id="booksChart" height="@(Math.Max(120, Model.TopBooksByPrimaryReferences.Count * 24))"></canvas>
+    }
+    else
+    {
+        <p class="muted">No Bible references recorded in this range.</p>
+    }
+</div>
+
+<h2>Theology categories</h2>
+<div class="card">
+    @if (Model.CategoryFrequency.Count > 0)
+    {
+        <canvas id="categoryChart" height="@(Math.Max(120, Model.CategoryFrequency.Count * 24))"></canvas>
+    }
+    else
+    {
+        <p class="muted">No categorized sermons in this range yet.</p>
+    }
+</div>
+
+<h2>Bible coverage &amp; blind spots</h2>
+<div class="card">
+    @if (Model.NeverReferencedBooks.Count > 0)
+    {
+        <p><strong>Never referenced in this range (@Model.NeverReferencedBooks.Count):</strong> @string.Join(", ", Model.NeverReferencedBooks)</p>
+    }
+    else
+    {
+        <p class="muted">Every book has been referenced at least once in this range.</p>
+    }
+    @if (Model.RarelyReferencedBooks.Count > 0)
+    {
+        <p><strong>Rarely referenced (1-2 times, @Model.RarelyReferencedBooks.Count):</strong> @string.Join(", ", Model.RarelyReferencedBooks)</p>
+    }
+</div>
+
+<div class="card">
+    <div style="display:flex; gap:2rem; flex-wrap:wrap;">
+        <div style="flex:1; min-width:280px;">
+            <h3 class="muted">Old Testament</h3>
+            <table>
+                <thead><tr><th>Book</th><th>Primary</th><th>Total</th></tr></thead>
+                <tbody>
+                    @foreach (var row in Model.BibleCoverage.Where(r => r.Testament == BibleTestament.Old))
+                    {
+                        <tr class="@(row.TotalCount == 0 ? "muted" : "")">
+                            <td>@row.BookName</td>
+                            <td>@row.PrimaryCount</td>
+                            <td>@row.TotalCount</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div style="flex:1; min-width:280px;">
+            <h3 class="muted">New Testament</h3>
+            <table>
+                <thead><tr><th>Book</th><th>Primary</th><th>Total</th></tr></thead>
+                <tbody>
+                    @foreach (var row in Model.BibleCoverage.Where(r => r.Testament == BibleTestament.New))
+                    {
+                        <tr class="@(row.TotalCount == 0 ? "muted" : "")">
+                            <td>@row.BookName</td>
+                            <td>@row.PrimaryCount</td>
+                            <td>@row.TotalCount</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@if (Model.UnparsedReferenceCount > 0)
+{
+    <div class="card" id="unparsed-refs">
+        <h3 class="muted">
+            Unparsed references (@Model.UnparsedReferenceCount total, showing up to @Model.UnparsedReferenceSamples.Count)
+        </h3>
+        <p class="muted">
+            These couldn't be automatically matched to one of the 66 books, so they are excluded from the
+            charts/coverage above rather than silently miscounted.
+        </p>
+        <ul>
+            @foreach (var sample in Model.UnparsedReferenceSamples)
+            {
+                <li>@sample</li>
+            }
+        </ul>
+    </div>
+}
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+    (function () {
+        var palette = ['#4e79a7', '#f28e2b', '#e15759', '#76b7b2', '#59a14f', '#edc948', '#b07aa1', '#ff9da7', '#9c755f'];
+
+        var bookLabels = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.TopBooksByPrimaryReferences.Select(b => b.Name)));
+        var bookCounts = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.TopBooksByPrimaryReferences.Select(b => b.Count)));
+
+        if (bookLabels.length > 0) {
+            new Chart(document.getElementById('booksChart'), {
+                type: 'bar',
+                data: {
+                    labels: bookLabels,
+                    datasets: [{ label: 'Primary references', data: bookCounts, backgroundColor: palette[0] }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: { x: { beginAtZero: true, ticks: { precision: 0 } } }
+                }
+            });
+        }
+
+        var categoryLabels = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.CategoryFrequency.Select(c => c.Name)));
+        var categoryCounts = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.CategoryFrequency.Select(c => c.Count)));
+
+        if (categoryLabels.length > 0) {
+            new Chart(document.getElementById('categoryChart'), {
+                type: 'bar',
+                data: {
+                    labels: categoryLabels,
+                    datasets: [{ label: 'Sermons', data: categoryCounts, backgroundColor: palette[2] }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: { x: { beginAtZero: true, ticks: { precision: 0 } } }
+                }
+            });
+        }
+
+    })();
+</script>

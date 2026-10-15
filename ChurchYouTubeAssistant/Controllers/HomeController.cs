@@ -29,14 +29,70 @@ public sealed class HomeController(
     IGoogleOAuthService oauthService,
     IYouTubeReadService youTubeReadService,
     IVideoAnalysisService analysisService,
+    IAnalyticsService analyticsService,
     IBackgroundJobTracker jobTracker,
     IBackgroundTaskQueue taskQueue,
     IVideoAnalysisProgressTracker progressTracker,
     IOptions<ThumbnailOptions> thumbnailOptions,
     IOptions<IdeogramOptions> ideogramOptions,
     IOptions<OpenAiImageOptions> openAiImageOptions,
+    TimeProvider timeProvider,
     ILogger<HomeController> logger) : Controller
 {
+    /// <summary>
+    /// The sermon-analytics page: topics/keywords/Bible-reference trends and coverage over a date
+    /// range (default: the last 12 months). All computed from existing analysis history - no new
+    /// YouTube API calls, so this does not touch the daily quota.
+    /// </summary>
+    [HttpGet("/analytics")]
+    public async Task<IActionResult> Analytics(
+        [FromQuery] DateOnly? from, [FromQuery] DateOnly? to, CancellationToken cancellationToken)
+    {
+        var today = DateOnly.FromDateTime(timeProvider.GetUtcNow().UtcDateTime);
+        var effectiveTo = to ?? today;
+        var effectiveFrom = from ?? effectiveTo.AddMonths(-12);
+
+        var model = await analyticsService.GetAnalyticsAsync(effectiveFrom, effectiveTo, cancellationToken);
+        return View(model);
+    }
+
+    /// <summary>
+    /// Queues a theology-category classification (see <see cref="ICategorizationService"/>) for
+    /// every already-analyzed video that doesn't have one yet - the backfill action for sermons
+    /// analyzed before this field existed. Fire-and-forget per video, same background-queue pattern
+    /// as <see cref="AnalyzeBatch"/>; redirects straight back to the analytics page.
+    /// </summary>
+    [HttpPost("/videos/categorize-uncategorized")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> CategorizeUncategorized(CancellationToken cancellationToken)
+    {
+        var targets = await analysisService.GetUncategorizedAsync(cancellationToken);
+
+        foreach (var (videoId, analysisId) in targets)
+        {
+            taskQueue.Enqueue(async (services, ct) =>
+            {
+                var scopedAnalysisService = services.GetRequiredService<IVideoAnalysisService>();
+                try
+                {
+                    await scopedAnalysisService.CategorizeAsync(videoId, analysisId, ct);
+                }
+                catch (Exception ex) when (ex is Exceptions.AiAnalysisException or Exceptions.VideoAnalysisNotFoundException)
+                {
+                    logger.LogWarning(ex, "Categorization failed for video {VideoId}.", videoId);
+                }
+            });
+        }
+
+        return Redirect(QueryHelpers.AddQueryString("/analytics", "success",
+            targets.Count switch
+            {
+                0 => "Nothing to categorize - every analyzed sermon already has a category.",
+                1 => "Queued 1 sermon for categorization in the background.",
+                _ => $"Queued {targets.Count} sermons for categorization in the background."
+            }));
+    }
+
     /// <summary>The dashboard: connection status, channel summary, latest uploads.</summary>
     [HttpGet("/")]
     public async Task<IActionResult> Index([FromQuery] string? pageToken, CancellationToken cancellationToken)
@@ -46,6 +102,7 @@ public sealed class HomeController(
         YouTubeChannelDto? channel = null;
         IReadOnlyList<YouTubeVideoDto> videos = [];
         IReadOnlyDictionary<string, VideoDashboardStatus> videoStatuses = new Dictionary<string, VideoDashboardStatus>();
+        IReadOnlyDictionary<string, Guid> videoThumbnailAnalysisIds = new Dictionary<string, Guid>();
         string? nextPageToken = null;
         string? prevPageToken = null;
         string? loadError = null;
@@ -68,6 +125,7 @@ public sealed class HomeController(
 
                 var videoIds = videos.Select(v => v.VideoId).ToList();
                 videoStatuses = await analysisService.GetDashboardStatusesAsync(videoIds, cancellationToken);
+                videoThumbnailAnalysisIds = await analysisService.GetLatestThumbnailAnalysisIdsAsync(videoIds, cancellationToken);
 
                 // Overlay "Analyzing" for any video with a job currently in flight (single or
                 // batch) - overrides whatever the DB-derived status above says, so the dashboard
@@ -104,6 +162,7 @@ public sealed class HomeController(
             Channel = channel,
             Videos = videos,
             VideoStatuses = videoStatuses,
+            VideoThumbnailAnalysisIds = videoThumbnailAnalysisIds,
             CurrentPageToken = pageToken,
             NextPageToken = nextPageToken,
             PrevPageToken = prevPageToken,
@@ -428,15 +487,29 @@ public sealed class HomeController(
         [FromForm] string? pageToken,
         CancellationToken cancellationToken)
     {
+        // The dashboard's "Review Thumbnail" modal publishes via fetch() and asks for JSON (see
+        // Index.cshtml) so it can show the result in place and close itself, instead of following
+        // the Analysis page's own full-page redirect. The Analysis page's own publish form sends no
+        // such header, so it keeps getting the exact View()/Redirect() behavior it always has.
+        var wantsJson = Request.Headers.Accept
+            .Any(a => a is not null && a.Contains("application/json", StringComparison.OrdinalIgnoreCase));
+
         var history = await analysisService.GetHistoryAsync(videoId, cancellationToken);
         var selected = history.FirstOrDefault(a => a.Id == analysisId);
 
         if (string.IsNullOrWhiteSpace(title) || title.Length > 100 ||
             string.IsNullOrWhiteSpace(description) || description.Length > 5000)
         {
+            const string validationMessage = "Title must be 1-100 characters and description 1-5000 characters.";
+
+            if (wantsJson)
+            {
+                return Ok(new { published = false, conflictDetected = false, message = validationMessage });
+            }
+
             return View("Analysis", BuildAnalysisViewModel(videoId, history, selected, pageToken) with
             {
-                FlashError = "Title must be 1-100 characters and description 1-5000 characters."
+                FlashError = validationMessage
             });
         }
 
@@ -453,6 +526,16 @@ public sealed class HomeController(
 
         if (result.ConflictDetected && !result.Published)
         {
+            if (wantsJson)
+            {
+                return Ok(new
+                {
+                    published = false,
+                    conflictDetected = true,
+                    message = result.ConflictDetail
+                });
+            }
+
             return View("Analysis", BuildAnalysisViewModel(videoId, history, result.Analysis, pageToken) with
             {
                 ConflictDetected = true,
@@ -472,6 +555,18 @@ public sealed class HomeController(
                 $"Published title and description, but the thumbnail upload failed: {result.ThumbnailError}",
             _ => "Published to YouTube."
         };
+
+        if (wantsJson)
+        {
+            return Ok(new
+            {
+                published = true,
+                conflictDetected = result.ConflictDetected,
+                message = successMessage,
+                thumbnailAttempted = result.ThumbnailAttempted,
+                thumbnailPublished = result.ThumbnailPublished
+            });
+        }
 
         return Redirect(QueryHelpers.AddQueryString(
             $"/videos/{videoId}/analysis",
@@ -633,6 +728,47 @@ public sealed class HomeController(
                 ["pageToken"] = pageToken,
                 ["job"] = "thumbnail-publish"
             }));
+    }
+
+    /// <summary>
+    /// Classifies (or re-classifies) one video's theology category via
+    /// <see cref="IVideoAnalysisService.CategorizeAsync"/> - a quick, synchronous call (no transcript,
+    /// a short summary-only prompt), so unlike Analyze/GenerateThumbnail this does not need the
+    /// background-job polling flow. Lets an admin try categorization on a single sermon before
+    /// running the bulk "Categorize uncategorized" backfill on the Analytics page.
+    /// </summary>
+    [HttpPost("/videos/{videoId}/analysis/{analysisId:guid}/categorize")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> CategorizeSingle(
+        string videoId, Guid analysisId, [FromForm] string? pageToken, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var analysis = await analysisService.CategorizeAsync(videoId, analysisId, cancellationToken);
+            var successMessage = $"Categorized as {TheologyCategoryCatalog.EnglishNameOf(analysis.PrimaryCategory!.Value)}"
+                + (analysis.SecondaryCategories.Count > 0
+                    ? $" (+{analysis.SecondaryCategories.Count} secondary: {string.Join(", ", analysis.SecondaryCategories.Select(TheologyCategoryCatalog.EnglishNameOf))})"
+                    : ".");
+
+            return Redirect(QueryHelpers.AddQueryString(
+                $"/videos/{videoId}/analysis", new Dictionary<string, string?>
+                {
+                    ["analysisId"] = analysisId.ToString(),
+                    ["pageToken"] = pageToken,
+                    ["success"] = successMessage
+                }));
+        }
+        catch (Exception ex) when (ex is Exceptions.AiAnalysisException or Exceptions.VideoAnalysisNotFoundException)
+        {
+            logger.LogWarning(ex, "Categorization failed for video {VideoId}.", videoId);
+            return Redirect(QueryHelpers.AddQueryString(
+                $"/videos/{videoId}/analysis", new Dictionary<string, string?>
+                {
+                    ["analysisId"] = analysisId.ToString(),
+                    ["pageToken"] = pageToken,
+                    ["error"] = $"Categorization failed: {ex.Message}"
+                }));
+        }
     }
 
     /// <summary>Polling endpoint the Analysis page's waiting bar JavaScript calls every few seconds.</summary>

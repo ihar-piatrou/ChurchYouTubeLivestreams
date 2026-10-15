@@ -31,6 +31,24 @@ public sealed class ChurchYouTubeAssistantDbContext(DbContextOptions<ChurchYouTu
         list => (list ?? new List<string>()).Aggregate(0, (hash, item) => HashCode.Combine(hash, item.GetHashCode())),
         list => new List<string>(list ?? new List<string>()));
 
+    /// <summary>Stores a List&lt;TheologyCategory&gt; as a JSON array of the enum's string names (not numeric indices,
+    /// so the column stays meaningful even if TheologyCategory's members are ever reordered).</summary>
+    private static readonly ValueConverter<List<TheologyCategory>, string> CategoryListConverter = new(
+        list => JsonSerializer.Serialize(list.Select(c => c.ToString()).ToList(), (JsonSerializerOptions?)null),
+        // Rows created before this column existed have an empty/NULL value here (the migration that
+        // added it did not backfill one) - treat that the same as "no secondary categories" rather
+        // than letting JsonSerializer throw on empty input.
+        json => string.IsNullOrEmpty(json)
+            ? new List<TheologyCategory>()
+            : (JsonSerializer.Deserialize<List<string>>(json, (JsonSerializerOptions?)null) ?? new List<string>())
+                .Select(name => Enum.Parse<TheologyCategory>(name))
+                .ToList());
+
+    private static readonly ValueComparer<List<TheologyCategory>> CategoryListComparer = new(
+        (a, b) => (a ?? new List<TheologyCategory>()).SequenceEqual(b ?? new List<TheologyCategory>()),
+        list => (list ?? new List<TheologyCategory>()).Aggregate(0, (hash, item) => HashCode.Combine(hash, item)),
+        list => new List<TheologyCategory>(list ?? new List<TheologyCategory>()));
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<VideoRecord>(video =>
@@ -66,6 +84,8 @@ public sealed class ChurchYouTubeAssistantDbContext(DbContextOptions<ChurchYouTu
             analysis.Property(a => a.PromptVersion).HasMaxLength(20);
             analysis.Property(a => a.Language).HasMaxLength(20);
             analysis.Property(a => a.Status).HasConversion<string>().HasMaxLength(20);
+            analysis.Property(a => a.PrimaryCategory).HasConversion<string>().HasMaxLength(50);
+            analysis.Property(a => a.SecondaryCategories).HasConversion(CategoryListConverter, CategoryListComparer);
             analysis.Property(a => a.ThumbnailImageContentType).HasMaxLength(100);
             // ThumbnailImageData (byte[]) maps to varbinary(max) by convention - no explicit config needed.
 

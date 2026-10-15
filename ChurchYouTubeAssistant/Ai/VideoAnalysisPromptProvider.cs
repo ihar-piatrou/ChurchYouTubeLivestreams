@@ -10,8 +10,8 @@ namespace ChurchYouTubeAssistant.Ai;
 /// </remarks>
 public sealed class VideoAnalysisPromptProvider : IVideoAnalysisPromptProvider
 {
-    public const string CurrentVersion = "v10";
-    private const string CurrentFolderName = "VideoAnalysisV10";
+    public const string CurrentVersion = "v13";
+    private const string CurrentFolderName = "VideoAnalysisV13";
 
     public string Version => CurrentVersion;
     public string SystemPrompt { get; }

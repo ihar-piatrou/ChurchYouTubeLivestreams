@@ -1,4 +1,5 @@
 using ChurchYouTubeAssistant.Models.Ai;
+using ChurchYouTubeAssistant.Services;
 
 namespace ChurchYouTubeAssistant.Ai;
 
@@ -20,6 +21,7 @@ public sealed class VideoAnalysisValidator
     private const int MinRequiredChapters = 3;
     private const int MaxShortDurationSeconds = 60;
     private const int MinShortDurationSeconds = 5;
+    private const int MaxSecondaryCategories = 2;
 
     public VideoAnalysisValidationResult Validate(VideoAnalysisResult result, int? videoDurationSeconds)
     {
@@ -29,6 +31,7 @@ public sealed class VideoAnalysisValidator
         ValidateLanguage(result, warnings);
         ValidateTitleAndDescription(result, warnings, errors);
         ValidateAlternativeTitles(result, warnings);
+        ValidateTheologyCategory(result, warnings);
         ValidateBibleReferences(result, videoDurationSeconds, warnings);
         ValidateChapters(result, videoDurationSeconds, warnings);
         ValidateShorts(result, videoDurationSeconds, warnings);
@@ -82,6 +85,30 @@ public sealed class VideoAnalysisValidator
         if (result.Metadata.AlternativeTitles.Count == 0)
         {
             warnings.Add("Model returned no usable alternative titles.");
+        }
+    }
+
+    private static void ValidateTheologyCategory(VideoAnalysisResult result, List<string> warnings)
+    {
+        var primary = TheologyCategoryCatalog.TryParse(result.SermonAnalysis.PrimaryCategory);
+        if (primary is null)
+        {
+            warnings.Add(
+                $"Model returned an unrecognized or missing primaryCategory ('{result.SermonAnalysis.PrimaryCategory}'); " +
+                "left uncategorized.");
+            result.SermonAnalysis.PrimaryCategory = string.Empty;
+        }
+
+        var beforeSecondary = result.SermonAnalysis.SecondaryCategories.Count;
+        result.SermonAnalysis.SecondaryCategories = result.SermonAnalysis.SecondaryCategories
+            .Where(c => TheologyCategoryCatalog.TryParse(c) is { } parsed && (primary is null || parsed != primary))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(MaxSecondaryCategories)
+            .ToList();
+
+        if (result.SermonAnalysis.SecondaryCategories.Count < beforeSecondary)
+        {
+            warnings.Add("Removed one or more unrecognized/duplicate secondaryCategories entries.");
         }
     }
 

@@ -5,6 +5,7 @@ using ChurchYouTubeAssistant.Exceptions;
 using ChurchYouTubeAssistant.Models.Ai;
 using Microsoft.Extensions.Options;
 using OpenAI.Chat;
+using Polly;
 
 namespace ChurchYouTubeAssistant.Ai;
 
@@ -33,6 +34,7 @@ public sealed class OpenAiVideoAnalysisService(
     ChatClient chatClient,
     IVideoAnalysisPromptProvider promptProvider,
     IOptions<OpenAiOptions> options,
+    ResiliencePipeline retryPipeline,
     ILogger<OpenAiVideoAnalysisService> logger) : IVideoAnalysisAiService
 {
     /// <summary>
@@ -220,6 +222,7 @@ public sealed class OpenAiVideoAnalysisService(
          VIDEO ID: {input.VideoId}
          LANGUAGE HINT: {input.LanguageHint ?? "unknown - detect from the transcript"}
          DURATION SECONDS: {(input.DurationSeconds?.ToString() ?? "unknown")}
+         PUBLISHED DATE: {(input.PublishedAt?.ToString("M/d/yyyy") ?? "unknown")}
 
          ORIGINAL TITLE:
          {input.OriginalTitle}
@@ -256,7 +259,10 @@ public sealed class OpenAiVideoAnalysisService(
         ClientResult<ChatCompletion> response;
         try
         {
-            response = await chatClient.CompleteChatAsync(messages, chatOptions, linkedCts.Token);
+            // Retries on HTTP 429 (rate limited/quota) with exponential backoff before this method's
+            // own catch blocks below ever see it - see OpenAiRetryPolicy for the exact schedule.
+            response = await retryPipeline.ExecuteAsync(
+                async ct => await chatClient.CompleteChatAsync(messages, chatOptions, ct), linkedCts.Token);
         }
         catch (ClientResultException ex) when (ex.Status == 429)
         {

@@ -14,6 +14,8 @@
     --err-text: #c0392b;
     --info-bg: #e8f0fe;
     --info-text: #1a56c4;
+    --pub-bg: #ede7f6;
+    --pub-text: #5e35b1;
     --btn-bg: #1a73e8;
     --btn-bg-hover: #1558b0;
     --btn-text: #ffffff;
@@ -35,6 +37,8 @@
         --err-text: #f28b82;
         --info-bg: #1b2a4a;
         --info-text: #8ab4f8;
+        --pub-bg: #2a1f3d;
+        --pub-text: #c7a8f5;
         /* A more saturated blue than --brand (which is pale, for link text on a dark page) -
            white button text on it stays readable, unlike it would on --brand itself. */
         --btn-bg: #4c8dff;
@@ -75,6 +79,10 @@ h1 { font-size: 1.4rem; margin: 0 0 0.75rem; }
 h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
 
 .card {
+    /* Overrides Bootstrap's own .card (display: flex; flex-direction: column), now that
+       bootstrap.min.css is loaded in _Layout.cshtml - without this, .channel's side-by-side
+       image/text layout would collapse into a column. */
+    display: block;
     background: var(--card-bg);
     border: 1px solid var(--border);
     border-radius: 10px;
@@ -91,6 +99,7 @@ h2 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
 .alert-success { background: var(--ok-bg); color: var(--ok-text); }
 .alert-warning { background: var(--warn-bg); color: var(--warn-text); }
 .alert-error { background: var(--err-bg); color: var(--err-text); }
+.alert-info { background: var(--info-bg); color: var(--info-text); }
 .alert ul { margin: 0.35rem 0 0; padding-left: 1.2rem; }
 
 .btn {
@@ -204,6 +213,7 @@ select:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; bor
 .badge-off { background: var(--err-bg); color: var(--err-text); }
 .badge-warn { background: var(--warn-bg); color: var(--warn-text); }
 .badge-info { background: var(--info-bg); color: var(--info-text); }
+.badge-published { background: var(--pub-bg); color: var(--pub-text); }
 
 .filter-bar {
     display: flex;
@@ -265,6 +275,14 @@ a { color: var(--brand); }
     padding: 1rem;
     max-height: 70vh;
     overflow: auto;
+}
+
+/* Bootstrap's modal defaults to light-theme colors regardless of OS preference - these keep it in
+   step with this app's own color-scheme-aware tokens instead of clashing with the rest of the page. */
+.modal-content { background: var(--card-bg); color: var(--text); border-color: var(--border); }
+.modal-header, .modal-footer { border-color: var(--border); }
+@media (prefers-color-scheme: dark) {
+    .btn-close { filter: invert(1) grayscale(100%) brightness(200%); }
 }
 
 form.inline { display: inline; }

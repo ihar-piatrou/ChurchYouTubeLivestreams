@@ -72,6 +72,14 @@ public sealed record SermonAnalysis
 
     [JsonPropertyName("keywords")]
     public List<string> Keywords { get; set; } = [];
+
+    /// <summary>One of the 20 fixed TheologyCategory English labels - validated/parsed in VideoAnalysisValidator.</summary>
+    [JsonPropertyName("primaryCategory")]
+    public string PrimaryCategory { get; set; } = string.Empty;
+
+    /// <summary>Zero or more additional TheologyCategory English labels, excluding PrimaryCategory.</summary>
+    [JsonPropertyName("secondaryCategories")]
+    public List<string> SecondaryCategories { get; set; } = [];
 }
 
 public sealed record BibleReferenceInfo

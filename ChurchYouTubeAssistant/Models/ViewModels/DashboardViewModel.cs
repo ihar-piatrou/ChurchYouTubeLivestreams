@@ -25,6 +25,13 @@ public sealed class DashboardViewModel
     public IReadOnlyDictionary<string, Services.VideoDashboardStatus> VideoStatuses { get; init; } =
         new Dictionary<string, Services.VideoDashboardStatus>();
 
+    /// <summary>
+    /// The latest analysis id for each video that has a generated thumbnail, keyed by VideoId.
+    /// Missing key means there is nothing to review yet - drives the "Review Thumbnail" button.
+    /// </summary>
+    public IReadOnlyDictionary<string, Guid> VideoThumbnailAnalysisIds { get; init; } =
+        new Dictionary<string, Guid>();
+
     /// <summary>The token this page was loaded with, if any; carried along to per-video links and
     /// batch actions so leaving this page and coming back (e.g. "Back to dashboard") lands on the
     /// same page instead of resetting to the first one.</summary>

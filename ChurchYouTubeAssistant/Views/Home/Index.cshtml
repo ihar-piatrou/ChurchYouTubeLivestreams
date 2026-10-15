@@ -35,6 +35,7 @@
 
 <div class="card">
     <div class="status-row">
+        <a class="btn btn-secondary" href="/analytics">Sermon Analytics</a>
         @if (Model.Connected)
         {
             <span class="badge badge-ok">Connected</span>
@@ -92,7 +93,9 @@
                 <option value="">All statuses</option>
                 <option value="NotAnalyzed">Not analyzed</option>
                 <option value="Analyzing">Analyzing</option>
-                <option value="Analyzed">Analyzed</option>
+                <option value="Analyzed">Analyzed - OK</option>
+                <option value="AnalyzedPartial">Analyzed - Partially OK</option>
+                <option value="AnalyzedFailed">Analyzed - Failed</option>
                 <option value="Published">Published to YouTube</option>
             </select>
         </div>
@@ -145,10 +148,16 @@
                                 @switch (status)
                                 {
                                     case VideoDashboardStatus.Published:
-                                        <span class="badge badge-ok">Published to YouTube</span>
+                                        <span class="badge badge-published">Published to YouTube</span>
                                         break;
                                     case VideoDashboardStatus.Analyzed:
-                                        <span class="badge badge-warn">Analyzed</span>
+                                        <span class="badge badge-ok">Analyzed - OK</span>
+                                        break;
+                                    case VideoDashboardStatus.AnalyzedPartial:
+                                        <span class="badge badge-warn">Analyzed - Partially OK</span>
+                                        break;
+                                    case VideoDashboardStatus.AnalyzedFailed:
+                                        <span class="badge badge-off">Analyzed - Failed</span>
                                         break;
                                     case VideoDashboardStatus.Analyzing:
                                         <span class="badge badge-info">Analyzing...</span>
@@ -158,10 +167,29 @@
                                         break;
                                 }
                             </td>
-                            <td>
-                                <a href="/transcript/@video.VideoId@(Model.CurrentPageToken is { Length: > 0 } cpt ? $"?pageToken={Uri.EscapeDataString(cpt)}" : "")">Transcript</a>
-                                &middot;
-                                <a href="/videos/@video.VideoId/analysis@(Model.CurrentPageToken is { Length: > 0 } cpt2 ? $"?pageToken={Uri.EscapeDataString(cpt2)}" : "")">Analyze</a>
+                            <td class="text-nowrap">
+                                <div class="d-flex gap-1">
+                                    <a class="btn btn-sm btn-secondary" title="Transcript" aria-label="Transcript"
+                                       href="/transcript/@video.VideoId@(Model.CurrentPageToken is { Length: > 0 } cpt ? $"?pageToken={Uri.EscapeDataString(cpt)}" : "")">
+                                        <i class="bi bi-file-earmark-text"></i>
+                                    </a>
+                                    <a class="btn btn-sm btn-secondary" title="Analyze" aria-label="Analyze"
+                                       href="/videos/@video.VideoId/analysis@(Model.CurrentPageToken is { Length: > 0 } cpt2 ? $"?pageToken={Uri.EscapeDataString(cpt2)}" : "")">
+                                        <i class="bi bi-robot"></i>
+                                    </a>
+                                    @if (Model.VideoThumbnailAnalysisIds.TryGetValue(video.VideoId, out var thumbAnalysisId))
+                                    {
+                                        <button type="button" class="btn btn-sm btn-secondary review-thumb-btn" title="Review Thumbnail" aria-label="Review Thumbnail"
+                                                data-bs-toggle="modal" data-bs-target="#thumbReviewModal"
+                                                data-title="@video.Title"
+                                                data-video-id="@video.VideoId"
+                                                data-analysis-id="@thumbAnalysisId"
+                                                data-img="/youtube/videos/@video.VideoId/analyses/@thumbAnalysisId/thumbnail"
+                                                data-link="/videos/@video.VideoId/analysis?analysisId=@thumbAnalysisId@(Model.CurrentPageToken is { Length: > 0 } cpt3 ? $"&pageToken={Uri.EscapeDataString(cpt3)}" : "")">
+                                            <i class="bi bi-image"></i>
+                                        </button>
+                                    }
+                                </div>
                             </td>
                         </tr>
                     }
@@ -188,6 +216,67 @@ else if (Model.Connected && Model.LoadError is null)
     <p class="muted">No uploads found on this channel yet.</p>
 }
 
+<div class="modal fade" id="thumbReviewModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="thumbReviewTitle"></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="thumbReviewResult" class="alert" style="display:none;"></div>
+                <img id="thumbReviewImg" src="" alt="Thumbnail preview" class="img-fluid rounded d-block mx-auto mb-3" />
+
+                <p id="thumbReviewLoading" class="muted">Loading title &amp; description...</p>
+
+                <div id="thumbReviewContent" style="display:none;">
+                    <h6 class="muted">Original</h6>
+                    <p><strong id="thumbReviewOriginalTitle"></strong></p>
+                    <div class="transcript-box" style="max-height:8em;" id="thumbReviewOriginalDescription"></div>
+
+                    <h6 class="muted mt-3">AI Optimized (editable before publishing)</h6>
+                    <label for="thumbReviewGeneratedTitleInput" class="visually-hidden">Title</label>
+                    <input type="text" id="thumbReviewGeneratedTitleInput" maxlength="100"
+                           style="width:100%;padding:0.5rem;margin:0.3rem 0;" />
+                    <label for="thumbReviewGeneratedDescriptionInput" class="visually-hidden">Description</label>
+                    <textarea id="thumbReviewGeneratedDescriptionInput" rows="8" maxlength="5000"
+                              style="width:100%;padding:0.5rem;font-family:inherit;"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <a class="btn btn-secondary" id="thumbReviewOpenAnalysis" href="#">
+                    <i class="bi bi-arrow-up-right-square"></i> Open full analysis
+                </a>
+                <form method="post" id="thumbReviewPublishTitleForm" class="d-inline">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="title" id="thumbReviewPublishTitleOnlyTitle" />
+                    <input type="hidden" name="description" id="thumbReviewPublishTitleOnlyDescription" />
+                    <input type="hidden" name="includeThumbnail" value="false" />
+                    <input type="hidden" name="acknowledgeConflict" value="false" />
+                    <input type="hidden" name="pageToken" value="@Model.CurrentPageToken" />
+                    <button type="submit" class="btn btn-secondary"
+                            onclick="return confirm('Publish title and description only? The thumbnail will not be touched.');">
+                        Publish Title &amp; Description Only
+                    </button>
+                </form>
+                <form method="post" id="thumbReviewPublishFullForm" class="d-inline">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="title" id="thumbReviewPublishFullTitle" />
+                    <input type="hidden" name="description" id="thumbReviewPublishFullDescription" />
+                    <input type="hidden" name="includeThumbnail" value="true" />
+                    <input type="hidden" name="acknowledgeConflict" value="false" />
+                    <input type="hidden" name="pageToken" value="@Model.CurrentPageToken" />
+                    <button type="submit" class="btn"
+                            onclick="return confirm('Publish title, description, and thumbnail to YouTube now?');">
+                        Full Publish
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
 <script>
     (function () {
         var rows = document.querySelectorAll('tbody tr[data-title]');
@@ -246,4 +335,185 @@ else if (Model.Connected && Model.LoadError is null)
             });
         });
     })();
+
+    // Quick thumbnail review: one shared Bootstrap modal, populated from whichever row's button was
+    // clicked, so reviewing a generated thumbnail (plus its title/description, and publishing it)
+    // doesn't require leaving the dashboard.
+    (function () {
+        var modalEl = document.getElementById('thumbReviewModal');
+        if (!modalEl || !window.bootstrap) { return; }
+
+        var titleEl = document.getElementById('thumbReviewTitle');
+        var imgEl = document.getElementById('thumbReviewImg');
+        var openLink = document.getElementById('thumbReviewOpenAnalysis');
+        var loadingEl = document.getElementById('thumbReviewLoading');
+        var contentEl = document.getElementById('thumbReviewContent');
+        var resultEl = document.getElementById('thumbReviewResult');
+        var originalTitleEl = document.getElementById('thumbReviewOriginalTitle');
+        var originalDescriptionEl = document.getElementById('thumbReviewOriginalDescription');
+        var generatedTitleInput = document.getElementById('thumbReviewGeneratedTitleInput');
+        var generatedDescriptionInput = document.getElementById('thumbReviewGeneratedDescriptionInput');
+        var titleOnlyForm = document.getElementById('thumbReviewPublishTitleForm');
+        var titleOnlyTitleInput = document.getElementById('thumbReviewPublishTitleOnlyTitle');
+        var titleOnlyDescriptionInput = document.getElementById('thumbReviewPublishTitleOnlyDescription');
+        var fullForm = document.getElementById('thumbReviewPublishFullForm');
+        var fullTitleInput = document.getElementById('thumbReviewPublishFullTitle');
+        var fullDescriptionInput = document.getElementById('thumbReviewPublishFullDescription');
+
+        var currentVideoId = null;
+        var currentAnalysisId = null;
+
+        function showResult(cssClass, message) {
+            if (!message) {
+                resultEl.style.display = 'none';
+                resultEl.className = 'alert';
+                resultEl.textContent = '';
+                return;
+            }
+            resultEl.className = 'alert ' + cssClass;
+            resultEl.textContent = message;
+            resultEl.style.display = '';
+        }
+
+        function setPublishButtonsDisabled(disabled) {
+            titleOnlyForm.querySelector('button[type="submit"]').disabled = disabled;
+            fullForm.querySelector('button[type="submit"]').disabled = disabled;
+        }
+
+        // Mirrors VideoAnalysisService's own "prefilled description" rule (edited draft wins if one
+        // exists; otherwise the AI description plus an appended Chapters list) - keeps what this
+        // modal shows and what it publishes consistent with each other and with the Analysis page.
+        function buildGeneratedDescription(analysis) {
+            if (analysis.editedDescription) {
+                return analysis.editedDescription;
+            }
+
+            var description = (analysis.optimizedDescription || '').replace(/\s+$/, '');
+            var included = (analysis.chapters || [])
+                .filter(function (c) { return c.included; })
+                .sort(function (a, b) { return a.startSeconds - b.startSeconds; });
+
+            if (included.length === 0) {
+                return analysis.optimizedDescription || '';
+            }
+
+            var lines = included.map(function (c) { return c.startTime + ' ' + c.title; });
+            return description + '\n\nChapters:\n' + lines.join('\n');
+        }
+
+        document.querySelectorAll('.review-thumb-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                currentVideoId = btn.dataset.videoId;
+                currentAnalysisId = btn.dataset.analysisId;
+                var publishUrl = '/videos/' + currentVideoId + '/analysis/' + currentAnalysisId + '/publish';
+
+                titleEl.textContent = btn.dataset.title || '';
+                imgEl.src = btn.dataset.img;
+                openLink.href = btn.dataset.link;
+                titleOnlyForm.action = publishUrl;
+                fullForm.action = publishUrl;
+
+                showResult('', '');
+                setPublishButtonsDisabled(false);
+                contentEl.style.display = 'none';
+                loadingEl.style.display = '';
+                loadingEl.textContent = 'Loading title & description...';
+
+                fetch('/youtube/videos/' + currentVideoId + '/analyses/' + currentAnalysisId)
+                    .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+                    .then(function (analysis) {
+                        var generatedTitle = analysis.editedTitle || analysis.optimizedTitle || '';
+                        var generatedDescription = buildGeneratedDescription(analysis);
+
+                        originalTitleEl.textContent = analysis.originalTitle || '';
+                        originalDescriptionEl.textContent = analysis.originalDescription || '';
+                        generatedTitleInput.value = generatedTitle;
+                        generatedDescriptionInput.value = generatedDescription;
+
+                        loadingEl.style.display = 'none';
+                        contentEl.style.display = '';
+                    })
+                    .catch(function () {
+                        loadingEl.textContent = 'Could not load title & description for this analysis.';
+                    });
+            });
+        });
+
+        // Both publish buttons share the one editable title/description pair above. Before actually
+        // publishing, each form first saves that text as the analysis's draft (same write the
+        // Analysis page's own "Save Draft" button performs) so an edit made here is never lost even
+        // if the publish call itself fails (a YouTube conflict, a validation error, etc.). The
+        // publish call itself is also done via fetch (asking for JSON - see PublishAnalysis in
+        // HomeController) so the result shows inside this modal and the modal closes itself, instead
+        // of following the Analysis page's own full-page redirect.
+        function wirePublishForm(form, titleInput, descriptionInput) {
+            form.addEventListener('submit', function (event) {
+                event.preventDefault();
+
+                var title = generatedTitleInput.value;
+                var description = generatedDescriptionInput.value;
+                var includeThumbnail = form.querySelector('input[name="includeThumbnail"]').value;
+                var pageToken = form.querySelector('input[name="pageToken"]').value || '';
+                var token = form.querySelector('input[name="__RequestVerificationToken"]').value;
+                titleInput.value = title;
+                descriptionInput.value = description;
+
+                setPublishButtonsDisabled(true);
+                showResult('alert-info', 'Publishing...');
+
+                var saveBody = new URLSearchParams();
+                saveBody.set('title', title);
+                saveBody.set('description', description);
+                saveBody.set('pageToken', pageToken);
+                saveBody.set('__RequestVerificationToken', token);
+
+                fetch('/videos/' + currentVideoId + '/analysis/' + currentAnalysisId + '/save', {
+                    method: 'POST',
+                    body: saveBody
+                }).finally(function () {
+                    var publishBody = new URLSearchParams();
+                    publishBody.set('title', title);
+                    publishBody.set('description', description);
+                    publishBody.set('includeThumbnail', includeThumbnail);
+                    publishBody.set('acknowledgeConflict', 'false');
+                    publishBody.set('pageToken', pageToken);
+                    publishBody.set('__RequestVerificationToken', token);
+
+                    fetch(form.action, {
+                        method: 'POST',
+                        headers: { 'Accept': 'application/json' },
+                        body: publishBody
+                    })
+                        .then(function (r) { return r.json(); })
+                        .then(function (result) {
+                            if (result.published) {
+                                showResult('alert-success', result.message || 'Published.');
+                                setTimeout(function () {
+                                    var modal = bootstrap.Modal.getInstance(modalEl);
+                                    if (modal) { modal.hide(); }
+                                    window.location.reload();
+                                }, 1200);
+                            } else {
+                                showResult('alert-error', result.message || 'Publish failed.');
+                                setPublishButtonsDisabled(false);
+                            }
+                        })
+                        .catch(function () {
+                            showResult('alert-error', 'Publish request failed unexpectedly - check your connection and try again.');
+                            setPublishButtonsDisabled(false);
+                        });
+                });
+            });
+        }
+
+        wirePublishForm(titleOnlyForm, titleOnlyTitleInput, titleOnlyDescriptionInput);
+        wirePublishForm(fullForm, fullTitleInput, fullDescriptionInput);
+
+        // Bootstrap keeps the modal (and this image) in the DOM between opens - clear the src once
+        // it's hidden so the previous row's thumbnail doesn't flash before the new one loads.
+        modalEl.addEventListener('hidden.bs.modal', function () {
+            imgEl.src = '';
+        });
+    })();
 </script>
+}

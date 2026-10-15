@@ -15,6 +15,7 @@ public sealed class VideoAnalysisService(
     IYouTubeWriteService youTubeWriteService,
     IVideoAnalysisAiService aiService,
     IThumbnailImageService thumbnailService,
+    ICategorizationService categorizationService,
     IVideoAnalysisPromptProvider promptProvider,
     IOptions<OpenAiOptions> openAiOptions,
     VideoAnalysisValidator validator,
@@ -30,22 +31,78 @@ public sealed class VideoAnalysisService(
             return statuses;
         }
 
-        var latestPerVideo = await db.VideoAnalyses
+        // Fetches a flat, trivially-translatable projection and does the "latest row per video"
+        // grouping client-side instead of inside the EF query: neither selecting the full
+        // VideoAnalysis entity (it owns several collection navigations EF can't materialize inside
+        // a GroupBy subquery) nor a nested anonymous "latest" projection translates reliably here.
+        // The dashboard only ever asks for one page of videos (<= 50), so this stays small.
+        var rows = await db.VideoAnalyses
             .Where(a => videoIds.Contains(a.VideoId))
+            .Select(a => new { a.VideoId, a.CreatedAtUtc, a.IsPublished, a.Status })
+            .ToListAsync(cancellationToken);
+
+        var latestPerVideo = rows
+            .GroupBy(a => a.VideoId)
+            .Select(g => g.OrderByDescending(a => a.CreatedAtUtc).First());
+
+        foreach (var entry in latestPerVideo)
+        {
+            statuses[entry.VideoId] = entry.IsPublished
+                ? VideoDashboardStatus.Published
+                : entry.Status switch
+                {
+                    AnalysisStatus.Succeeded => VideoDashboardStatus.Analyzed,
+                    AnalysisStatus.PartiallyValid => VideoDashboardStatus.AnalyzedPartial,
+                    AnalysisStatus.Failed => VideoDashboardStatus.AnalyzedFailed,
+                    // Pending is only ever meant to be transient (see AnalysisStatus.Pending), but a
+                    // crashed job could in principle leave one stuck - fall back to "Analyzing" so the
+                    // dashboard doesn't claim a result exists when none actually does.
+                    _ => VideoDashboardStatus.Analyzing
+                };
+        }
+
+        return statuses;
+    }
+
+    public async Task<IReadOnlyDictionary<string, Guid>> GetLatestThumbnailAnalysisIdsAsync(
+        IReadOnlyCollection<string> videoIds, CancellationToken cancellationToken = default)
+    {
+        if (videoIds.Count == 0)
+        {
+            return new Dictionary<string, Guid>();
+        }
+
+        // See the comment in GetDashboardStatusesAsync: fetch a flat projection and group "latest
+        // per video" client-side - grouping inside the EF query itself does not translate reliably.
+        var rows = await db.VideoAnalyses
+            .Where(a => videoIds.Contains(a.VideoId))
+            .Select(a => new { a.VideoId, a.Id, a.CreatedAtUtc, a.ThumbnailImageGeneratedAtUtc })
+            .ToListAsync(cancellationToken);
+
+        var latestWithThumbnail = rows
+            .GroupBy(a => a.VideoId)
+            .Select(g => g.OrderByDescending(a => a.CreatedAtUtc).First())
+            .Where(a => a.ThumbnailImageGeneratedAtUtc != null);
+
+        return latestWithThumbnail.ToDictionary(a => a.VideoId, a => a.Id);
+    }
+
+    public async Task<IReadOnlyList<(string VideoId, Guid AnalysisId)>> GetUncategorizedAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var uncategorized = await db.VideoAnalyses
+            .Where(a => a.Status == AnalysisStatus.Succeeded || a.Status == AnalysisStatus.PartiallyValid)
             .GroupBy(a => a.VideoId)
             .Select(g => new
             {
                 VideoId = g.Key,
-                IsPublished = g.OrderByDescending(a => a.CreatedAtUtc).First().IsPublished
+                AnalysisId = g.OrderByDescending(a => a.CreatedAtUtc).First().Id,
+                PrimaryCategory = g.OrderByDescending(a => a.CreatedAtUtc).First().PrimaryCategory
             })
+            .Where(x => x.PrimaryCategory == null)
             .ToListAsync(cancellationToken);
 
-        foreach (var entry in latestPerVideo)
-        {
-            statuses[entry.VideoId] = entry.IsPublished ? VideoDashboardStatus.Published : VideoDashboardStatus.Analyzed;
-        }
-
-        return statuses;
+        return uncategorized.Select(x => (x.VideoId, x.AnalysisId)).ToList();
     }
 
     public async Task<VideoAnalysis> AnalyzeAsync(string videoId, CancellationToken cancellationToken = default)
@@ -62,6 +119,7 @@ public sealed class VideoAnalysisService(
             OriginalTitle = video.Title,
             OriginalDescription = video.Description ?? string.Empty,
             DurationSeconds = video.Details?.Duration is { } duration ? (int)duration.TotalSeconds : null,
+            PublishedAt = ToServiceSunday(video.PublishedAt),
             Transcript = transcript.Content
         };
 
@@ -204,6 +262,26 @@ public sealed class VideoAnalysisService(
         return analysis;
     }
 
+    public async Task<VideoAnalysis> CategorizeAsync(
+        string videoId, Guid analysisId, CancellationToken cancellationToken = default)
+    {
+        var analysis = await db.VideoAnalyses.FirstOrDefaultAsync(
+                a => a.VideoId == videoId && a.Id == analysisId, cancellationToken)
+            ?? throw new VideoAnalysisNotFoundException($"Analysis {analysisId} for video {videoId} was not found.");
+
+        var result = await categorizationService.CategorizeAsync(analysis, cancellationToken);
+
+        analysis.PrimaryCategory = result.Primary;
+        analysis.SecondaryCategories = result.Secondary.ToList();
+        await db.SaveChangesAsync(cancellationToken);
+
+        logger.LogInformation(
+            "Categorized analysis {AnalysisId} (video {VideoId}) as {Primary} (+{SecondaryCount} secondary).",
+            analysisId, videoId, result.Primary, result.Secondary.Count);
+
+        return analysis;
+    }
+
     public async Task<PublishResult> PublishAsync(
         string videoId, Guid analysisId, PublishRequest request, CancellationToken cancellationToken = default)
     {
@@ -300,6 +378,23 @@ public sealed class VideoAnalysisService(
         };
     }
 
+    /// <summary>
+    /// Services are always Sunday, but YouTube's publish timestamp can land a day or more late (e.g.
+    /// a livestream finalized/published early Monday) - rolls a timestamp back to the most recent
+    /// Sunday on or before it, in the server's local time (the same convention the dashboard already
+    /// uses for display dates), so the AI gets the actual service date, not a late-publish artifact.
+    /// </summary>
+    private static DateTimeOffset? ToServiceSunday(DateTimeOffset? publishedAtUtc)
+    {
+        if (publishedAtUtc is not { } value)
+        {
+            return null;
+        }
+
+        var local = value.ToLocalTime();
+        return local.AddDays(-(int)local.DayOfWeek);
+    }
+
     private VideoAnalysis BuildEntity(
         Ai.VideoAnalysisInput input, Ai.VideoAnalysisAiCallResult aiResult, Ai.VideoAnalysisValidationResult validation)
     {
@@ -329,6 +424,12 @@ public sealed class VideoAnalysisService(
             MainQuestion = result.SermonAnalysis.MainQuestion,
             KeyThemes = result.SermonAnalysis.KeyThemes,
             Keywords = result.SermonAnalysis.Keywords,
+            PrimaryCategory = TheologyCategoryCatalog.TryParse(result.SermonAnalysis.PrimaryCategory),
+            SecondaryCategories = result.SermonAnalysis.SecondaryCategories
+                .Select(TheologyCategoryCatalog.TryParse)
+                .Where(c => c is not null)
+                .Select(c => c!.Value)
+                .ToList(),
 
             BibleReferences = result.BibleReferences,
             Chapters = result.Chapters,

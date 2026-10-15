@@ -33,6 +33,16 @@ public sealed class VideoAnalysis
     public List<string> KeyThemes { get; set; } = [];
     public List<string> Keywords { get; set; } = [];
 
+    /// <summary>
+    /// The fixed systematic-theology classification (see <see cref="TheologyCategory"/>). Null on
+    /// analyses created before this field existed, or where categorization has not yet run - see
+    /// <see cref="Services.ICategorizationService"/> for the backfill path.
+    /// </summary>
+    public TheologyCategory? PrimaryCategory { get; set; }
+
+    /// <summary>Additional categories the sermon meaningfully touches on, besides <see cref="PrimaryCategory"/>.</summary>
+    public List<TheologyCategory> SecondaryCategories { get; set; } = [];
+
     public List<BibleReferenceInfo> BibleReferences { get; set; } = [];
     public List<ChapterInfo> Chapters { get; set; } = [];
     public ThumbnailConcept? Thumbnail { get; set; }

@@ -1,4 +1,5 @@
 @model VideoAnalysisPageViewModel
+@using ChurchYouTubeAssistant.Services
 @{
     ViewData["Title"] = "AI Analysis";
     var a = Model.Selected;
@@ -60,9 +61,9 @@
 }
 
 <div class="card">
-    <div class="status-row">
-        @if (Model.History.Count > 0)
-        {
+    @if (Model.History.Count > 0)
+    {
+        <div class="status-row">
             <form method="get" action="/videos/@Model.VideoId/analysis" class="inline">
                 <input type="hidden" name="pageToken" value="@Model.PageToken" />
                 <label class="muted" for="analysisId">History:</label>
@@ -76,21 +77,39 @@
                     }
                 </select>
             </form>
-        }
+        </div>
+    }
+    <div class="status-row" style="margin-top:0.5rem;">
         @if (a is not null)
         {
             <button type="submit" form="publish-form" name="includeThumbnail" value="true" class="btn"
                     onclick="return confirm('Publish this title, description@(a.ThumbnailImageGeneratedAtUtc is not null ? " and thumbnail" : "") to the real YouTube video now?');">
                 Update Title, Description@(a.ThumbnailImageGeneratedAtUtc is not null ? " & Thumbnail" : "")
             </button>
+            <form id="categorize-form" method="post" action="/videos/@Model.VideoId/analysis/@a.Id/categorize" class="inline">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="pageToken" value="@Model.PageToken" />
+            </form>
+            <button type="submit" form="categorize-form" class="btn">@(a.PrimaryCategory is null ? "Categorize" : "Re-categorize")</button>
         }
-        <form method="post" action="/videos/@Model.VideoId/analysis/analyze" style="margin-left:auto;"
+        <form method="post" action="/videos/@Model.VideoId/analysis/analyze"
               onsubmit="return confirm('Run a new AI analysis? This calls OpenAI and may take up to a minute.');">
             @Html.AntiForgeryToken()
             <input type="hidden" name="pageToken" value="@Model.PageToken" />
             <button type="submit" class="btn">@(a is null ? "Analyze Video with AI" : "Regenerate Analysis")</button>
         </form>
     </div>
+    @if (a is not null && a.PrimaryCategory is { } primaryCategory)
+    {
+        <div class="status-row" style="margin-top:0.5rem;">
+            <span class="muted">Category:</span>
+            <span class="badge badge-ok">@TheologyCategoryCatalog.EnglishNameOf(primaryCategory)</span>
+            @foreach (var secondary in a.SecondaryCategories)
+            {
+                <span class="badge badge-info">@TheologyCategoryCatalog.EnglishNameOf(secondary)</span>
+            }
+        </div>
+    }
 </div>
 
 @if (a is null)

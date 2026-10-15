@@ -3,6 +3,7 @@ using ChurchYouTubeAssistant.Configuration;
 using ChurchYouTubeAssistant.Exceptions;
 using Microsoft.Extensions.Options;
 using OpenAI.Images;
+using Polly;
 
 namespace ChurchYouTubeAssistant.Ai;
 
@@ -10,11 +11,13 @@ namespace ChurchYouTubeAssistant.Ai;
 /// <remarks>
 /// Unlike <see cref="IdeogramThumbnailService"/>, OpenAI's image models return the generated
 /// image's bytes directly in the API response (base64) rather than a URL to download separately -
-/// so there is only one HTTP call here, made via the OpenAI SDK's <see cref="ImageClient"/>.
+/// so there is only one HTTP call here, made via the OpenAI SDK's <see cref="ImageClient"/>. Shares
+/// the same <see cref="Infrastructure.OpenAiRetryPolicy"/> retry pipeline as the chat-based calls.
 /// </remarks>
 public sealed class OpenAiThumbnailImageService(
     ImageClient imageClient,
     IOptions<OpenAiImageOptions> options,
+    ResiliencePipeline retryPipeline,
     ILogger<OpenAiThumbnailImageService> logger) : IThumbnailImageService
 {
     private readonly OpenAiImageOptions _options = options.Value;
@@ -41,7 +44,8 @@ public sealed class OpenAiThumbnailImageService(
         GeneratedImage image;
         try
         {
-            var result = await imageClient.GenerateImageAsync(imagePrompt, generationOptions, linkedCts.Token);
+            var result = await retryPipeline.ExecuteAsync(
+                async ct => await imageClient.GenerateImageAsync(imagePrompt, generationOptions, ct), linkedCts.Token);
             image = result.Value;
         }
         catch (Exception ex) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)

@@ -16,6 +16,14 @@ public interface IVideoAnalysisService
         IReadOnlyCollection<string> videoIds, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// The id of the latest analysis for each video, but only for videos whose latest analysis has
+    /// a generated thumbnail image - the lookup behind the dashboard's "Review Thumbnail" button, so
+    /// it only shows up where there is actually something to review.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, Guid>> GetLatestThumbnailAnalysisIdsAsync(
+        IReadOnlyCollection<string> videoIds, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Runs a complete analysis for a video and persists the result (whether it succeeded,
     /// partially succeeded, or failed - a failed attempt is still recorded, then the triggering
     /// exception is rethrown so the caller gets an appropriate error response).
@@ -77,6 +85,21 @@ public interface IVideoAnalysisService
     /// <exception cref="Exceptions.YouTubeIntegrationException">The thumbnail upload itself failed.</exception>
     Task<VideoAnalysis> PublishThumbnailOnlyAsync(
         string videoId, Guid analysisId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Classifies (or re-classifies) one analysis's theology category via
+    /// <see cref="ICategorizationService"/> and saves it in place - the backfill path for analyses
+    /// created before PrimaryCategory existed, or whose classification should be redone.
+    /// </summary>
+    /// <exception cref="Exceptions.VideoAnalysisNotFoundException">No such analysis exists for this video.</exception>
+    Task<VideoAnalysis> CategorizeAsync(
+        string videoId, Guid analysisId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// (VideoId, AnalysisId) for every video whose latest succeeded/partially-valid analysis has no
+    /// PrimaryCategory yet - the backfill target set for the dashboard's "Categorize uncategorized" action.
+    /// </summary>
+    Task<IReadOnlyList<(string VideoId, Guid AnalysisId)>> GetUncategorizedAsync(CancellationToken cancellationToken = default);
 }
 
 /// <summary>Coarse per-video status shown on the admin dashboard.</summary>
@@ -93,8 +116,20 @@ public enum VideoDashboardStatus
     /// </summary>
     Analyzing,
 
-    /// <summary>At least one analysis exists, but its result has not been published to YouTube.</summary>
+    /// <summary>The latest analysis fully succeeded and has not been published to YouTube yet.</summary>
     Analyzed,
+
+    /// <summary>
+    /// The latest analysis was usable but one or more sections were dropped/corrected during
+    /// validation (<see cref="AnalysisStatus.PartiallyValid"/>) - worth a closer look before publishing.
+    /// </summary>
+    AnalyzedPartial,
+
+    /// <summary>
+    /// The latest analysis attempt failed outright (<see cref="AnalysisStatus.Failed"/>) - nothing
+    /// usable was produced, so this video needs re-analyzing.
+    /// </summary>
+    AnalyzedFailed,
 
     /// <summary>The latest analysis has been published (title/description, and thumbnail if generated) to YouTube.</summary>
     Published
